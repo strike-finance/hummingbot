@@ -1,0 +1,677 @@
+import asyncio
+import time
+from decimal import Decimal
+from typing import Any, AsyncIterable, Dict, List, Optional, Tuple
+
+from bidict import bidict
+
+from hummingbot.connector.constants import s_decimal_NaN
+from hummingbot.connector.derivative.position import Position
+from hummingbot.connector.derivative.strike_perpetual import (
+    strike_perpetual_constants as CONSTANTS,
+    strike_perpetual_web_utils as web_utils,
+)
+from hummingbot.connector.derivative.strike_perpetual.strike_perpetual_api_order_book_data_source import (
+    StrikePerpetualAPIOrderBookDataSource,
+)
+from hummingbot.connector.derivative.strike_perpetual.strike_perpetual_api_user_stream_data_source import (
+    StrikePerpetualUserStreamDataSource,
+)
+from hummingbot.connector.derivative.strike_perpetual.strike_perpetual_auth import StrikePerpetualAuth
+from hummingbot.connector.perpetual_derivative_py_base import PerpetualDerivativePyBase
+from hummingbot.connector.trading_rule import TradingRule
+from hummingbot.connector.utils import get_new_client_order_id
+from hummingbot.core.api_throttler.data_types import RateLimit
+from hummingbot.core.data_type.common import OrderType, PositionAction, PositionMode, PositionSide, TradeType
+from hummingbot.core.data_type.in_flight_order import InFlightOrder, OrderUpdate, TradeUpdate
+from hummingbot.core.data_type.order_book_tracker_data_source import OrderBookTrackerDataSource
+from hummingbot.core.data_type.trade_fee import TradeFeeBase
+from hummingbot.core.data_type.user_stream_tracker_data_source import UserStreamTrackerDataSource
+from hummingbot.core.utils.async_utils import safe_ensure_future, safe_gather
+from hummingbot.core.utils.estimate_fee import build_trade_fee
+from hummingbot.core.web_assistant.web_assistants_factory import WebAssistantsFactory
+
+bpm_logger = None
+
+
+class StrikePerpetualDerivative(PerpetualDerivativePyBase):
+    """Strike Perpetual Exchange connector for Hummingbot."""
+
+    web_utils = web_utils
+
+    SHORT_POLL_INTERVAL = 5.0
+    LONG_POLL_INTERVAL = 12.0
+
+    def __init__(
+        self,
+        balance_asset_limit: Optional[Dict[str, Dict[str, Decimal]]] = None,
+        rate_limits_share_pct: Decimal = Decimal("100"),
+        strike_perpetual_account_id: str = None,
+        strike_perpetual_base_url: str = CONSTANTS.PERPETUAL_BASE_URL,
+        strike_perpetual_ws_url: str = CONSTANTS.PERPETUAL_WS_URL,
+        trading_pairs: Optional[List[str]] = None,
+        trading_required: bool = True,
+        domain: str = CONSTANTS.DOMAIN,
+    ):
+        """
+        Initialize the Strike Perpetual connector.
+
+        :param balance_asset_limit: Optional balance limits per asset
+        :param rate_limits_share_pct: Percentage of rate limits to use
+        :param strike_perpetual_account_id: Strike account ID
+        :param strike_perpetual_base_url: Base URL for Strike API
+        :param strike_perpetual_ws_url: WebSocket URL for Strike
+        :param trading_pairs: List of trading pairs to track
+        :param trading_required: Whether trading is required
+        :param domain: The exchange domain
+        """
+        self.strike_perpetual_account_id = strike_perpetual_account_id
+        self.strike_perpetual_base_url = strike_perpetual_base_url
+        self.strike_perpetual_ws_url = strike_perpetual_ws_url
+        self._trading_required = trading_required
+        self._trading_pairs = trading_pairs
+        self._domain = domain
+        self._position_mode = None
+        self._last_trade_history_timestamp = None
+        super().__init__(balance_asset_limit, rate_limits_share_pct)
+
+    @property
+    def name(self) -> str:
+        """Returns the connector name."""
+        return self._domain
+
+    @property
+    def authenticator(self) -> Optional[StrikePerpetualAuth]:
+        """Returns the authenticator instance."""
+        if self._trading_required:
+            return StrikePerpetualAuth(self.strike_perpetual_account_id)
+        return None
+
+    @property
+    def rate_limits_rules(self) -> List[RateLimit]:
+        """Returns the rate limit rules."""
+        return CONSTANTS.RATE_LIMITS
+
+    @property
+    def domain(self) -> str:
+        """Returns the exchange domain."""
+        return self._domain
+
+    @property
+    def client_order_id_max_length(self) -> int:
+        """Returns the maximum length for client order IDs."""
+        return CONSTANTS.MAX_ORDER_ID_LEN
+
+    @property
+    def client_order_id_prefix(self) -> str:
+        """Returns the client order ID prefix."""
+        return CONSTANTS.BROKER_ID
+
+    @property
+    def trading_rules_request_path(self) -> str:
+        """Returns the trading rules request path."""
+        return CONSTANTS.EXCHANGE_INFO_URL
+
+    @property
+    def trading_pairs_request_path(self) -> str:
+        """Returns the trading pairs request path."""
+        return CONSTANTS.EXCHANGE_INFO_URL
+
+    @property
+    def check_network_request_path(self) -> str:
+        """Returns the network check request path."""
+        return CONSTANTS.PING_URL
+
+    @property
+    def trading_pairs(self):
+        """Returns the trading pairs."""
+        return self._trading_pairs
+
+    @property
+    def is_cancel_request_in_exchange_synchronous(self) -> bool:
+        """Returns whether cancel requests are synchronous."""
+        return True
+
+    @property
+    def is_trading_required(self) -> bool:
+        """Returns whether trading is required."""
+        return self._trading_required
+
+    @property
+    def funding_fee_poll_interval(self) -> int:
+        """Returns the funding fee polling interval in seconds."""
+        return 120
+
+    async def _make_network_check_request(self):
+        """Makes a network check request to verify connectivity."""
+        await self._api_get(path_url=self.check_network_request_path)
+
+    def supported_order_types(self) -> List[OrderType]:
+        """Returns a list of supported order types."""
+        return [OrderType.LIMIT, OrderType.MARKET]
+
+    def supported_position_modes(self):
+        """Returns supported position modes."""
+        return [PositionMode.ONEWAY]
+
+    def get_buy_collateral_token(self, trading_pair: str) -> str:
+        """Returns the collateral token for buy orders."""
+        trading_rule: TradingRule = self._trading_rules[trading_pair]
+        return trading_rule.buy_order_collateral_token
+
+    def get_sell_collateral_token(self, trading_pair: str) -> str:
+        """Returns the collateral token for sell orders."""
+        trading_rule: TradingRule = self._trading_rules[trading_pair]
+        return trading_rule.sell_order_collateral_token
+
+    def _is_request_exception_related_to_time_synchronizer(self, request_exception: Exception):
+        """Checks if exception is related to time synchronization."""
+        return False
+
+    def _create_web_assistants_factory(self) -> WebAssistantsFactory:
+        """Creates the web assistants factory."""
+        return web_utils.build_api_factory(
+            throttler=self._throttler,
+            auth=self._auth
+        )
+
+    async def _make_trading_rules_request(self) -> Any:
+        """Makes a request to fetch trading rules."""
+        # Strike doesn't have a dedicated trading rules endpoint yet
+        # This is a placeholder - should be updated when Strike implements this
+        return []
+
+    async def _make_trading_pairs_request(self) -> Any:
+        """Makes a request to fetch trading pairs."""
+        # Placeholder - Strike should provide a markets endpoint
+        return []
+
+    def _is_order_not_found_during_status_update_error(self, status_update_exception: Exception) -> bool:
+        """Checks if order not found error occurred during status update."""
+        return CONSTANTS.ORDER_NOT_EXIST_MESSAGE in str(status_update_exception)
+
+    def _is_order_not_found_during_cancelation_error(self, cancelation_exception: Exception) -> bool:
+        """Checks if order not found error occurred during cancelation."""
+        return CONSTANTS.UNKNOWN_ORDER_MESSAGE in str(cancelation_exception)
+
+    def quantize_order_price(self, trading_pair: str, price: Decimal) -> Decimal:
+        """Quantizes order price according to trading rules."""
+        trading_rule = self._trading_rules.get(trading_pair)
+        if trading_rule:
+            return price.quantize(trading_rule.min_price_increment)
+        return price
+
+    async def _update_trading_rules(self):
+        """Updates trading rules from the exchange."""
+        # Placeholder implementation
+        # Strike backend should provide market configuration endpoint
+        pass
+
+    async def _initialize_trading_pair_symbol_map(self):
+        """Initializes the trading pair symbol map."""
+        try:
+            # Placeholder - Strike should provide a symbols endpoint
+            mapping = bidict()
+            for trading_pair in self._trading_pairs:
+                # For now, use direct mapping
+                exchange_symbol = trading_pair.replace("-", "")
+                mapping[exchange_symbol] = trading_pair
+            self._set_trading_pair_symbol_map(mapping)
+        except Exception:
+            self.logger().exception("There was an error requesting exchange info.")
+
+    def _create_order_book_data_source(self) -> OrderBookTrackerDataSource:
+        """Creates the order book data source."""
+        return StrikePerpetualAPIOrderBookDataSource(
+            trading_pairs=self._trading_pairs,
+            connector=self,
+            api_factory=self._web_assistants_factory,
+            domain=self.domain,
+        )
+
+    def _create_user_stream_data_source(self) -> UserStreamTrackerDataSource:
+        """Creates the user stream data source."""
+        return StrikePerpetualUserStreamDataSource(
+            auth=self._auth,
+            trading_pairs=self._trading_pairs,
+            connector=self,
+            api_factory=self._web_assistants_factory,
+            domain=self.domain,
+        )
+
+    async def _status_polling_loop_fetch_updates(self):
+        """Fetches updates in the status polling loop."""
+        await safe_gather(
+            self._update_order_status(),
+            self._update_balances(),
+            self._update_positions(),
+        )
+
+    async def _update_order_status(self):
+        """Updates order status."""
+        await self._update_orders()
+
+    async def _update_lost_orders_status(self):
+        """Updates lost orders status."""
+        await self._update_lost_orders()
+
+    def _get_fee(
+        self,
+        base_currency: str,
+        quote_currency: str,
+        order_type: OrderType,
+        order_side: TradeType,
+        position_action: PositionAction,
+        amount: Decimal,
+        price: Decimal = s_decimal_NaN,
+        is_maker: Optional[bool] = None
+    ) -> TradeFeeBase:
+        """Calculates trading fees."""
+        is_maker = is_maker or False
+        fee = build_trade_fee(
+            self.name,
+            is_maker,
+            base_currency=base_currency,
+            quote_currency=quote_currency,
+            order_type=order_type,
+            order_side=order_side,
+            amount=amount,
+            price=price,
+        )
+        return fee
+
+    async def _update_trading_fees(self):
+        """Updates fees information from the exchange."""
+        pass
+
+    async def _place_cancel(self, order_id: str, tracked_order: InFlightOrder):
+        """Places a cancel order request."""
+        symbol = await self.exchange_symbol_associated_to_pair(trading_pair=tracked_order.trading_pair)
+
+        api_params = {
+            "account_id": self.strike_perpetual_account_id,
+            "client_order_id": order_id,
+            "symbol": symbol,
+        }
+
+        cancel_result = await self._api_delete(
+            path_url=CONSTANTS.CANCEL_ORDER_URL,
+            data=api_params,
+            is_auth_required=True
+        )
+
+        if cancel_result.get("error"):
+            self.logger().debug(f"The order {order_id} does not exist on Strike. No cancelation needed.")
+            await self._order_tracker.process_order_not_found(order_id)
+            raise IOError(f'Error canceling order: {cancel_result.get("error")}')
+
+        return True
+
+    def buy(
+        self,
+        trading_pair: str,
+        amount: Decimal,
+        order_type=OrderType.LIMIT,
+        price: Decimal = s_decimal_NaN,
+        **kwargs
+    ) -> str:
+        """Creates a buy order."""
+        order_id = get_new_client_order_id(
+            is_buy=True,
+            trading_pair=trading_pair,
+            hbot_order_id_prefix=self.client_order_id_prefix,
+            max_id_len=self.client_order_id_max_length
+        )
+
+        if order_type is OrderType.MARKET:
+            reference_price = self.get_mid_price(trading_pair) if price.is_nan() else price
+            price = reference_price  # Strike handles slippage internally for market orders
+
+        safe_ensure_future(self._create_order(
+            trade_type=TradeType.BUY,
+            order_id=order_id,
+            trading_pair=trading_pair,
+            amount=amount,
+            order_type=order_type,
+            price=price,
+            **kwargs
+        ))
+        return order_id
+
+    def sell(
+        self,
+        trading_pair: str,
+        amount: Decimal,
+        order_type: OrderType = OrderType.LIMIT,
+        price: Decimal = s_decimal_NaN,
+        **kwargs
+    ) -> str:
+        """Creates a sell order."""
+        order_id = get_new_client_order_id(
+            is_buy=False,
+            trading_pair=trading_pair,
+            hbot_order_id_prefix=self.client_order_id_prefix,
+            max_id_len=self.client_order_id_max_length
+        )
+
+        if order_type is OrderType.MARKET:
+            reference_price = self.get_mid_price(trading_pair) if price.is_nan() else price
+            price = reference_price  # Strike handles slippage internally for market orders
+
+        safe_ensure_future(self._create_order(
+            trade_type=TradeType.SELL,
+            order_id=order_id,
+            trading_pair=trading_pair,
+            amount=amount,
+            order_type=order_type,
+            price=price,
+            **kwargs
+        ))
+        return order_id
+
+    async def _place_order(
+        self,
+        order_id: str,
+        trading_pair: str,
+        amount: Decimal,
+        trade_type: TradeType,
+        order_type: OrderType,
+        price: Decimal,
+        position_action: PositionAction = PositionAction.NIL,
+        **kwargs,
+    ) -> Tuple[str, float]:
+        """Places an order on Strike."""
+        symbol = await self.exchange_symbol_associated_to_pair(trading_pair=trading_pair)
+
+        # Map Hummingbot order type to Strike order type
+        strike_order_type = CONSTANTS.ORDER_TYPE_LIMIT if order_type == OrderType.LIMIT else CONSTANTS.ORDER_TYPE_MARKET
+
+        api_params = {
+            "account_id": self.strike_perpetual_account_id,
+            "client_order_id": order_id,
+            "symbol": symbol,
+            "side": CONSTANTS.ORDER_SIDE_BUY if trade_type == TradeType.BUY else CONSTANTS.ORDER_SIDE_SELL,
+            "type": strike_order_type,
+            "size": str(amount),
+            "reduce_only": position_action == PositionAction.CLOSE,
+        }
+
+        if order_type == OrderType.LIMIT:
+            api_params["price"] = str(price)
+
+        order_result = await self._api_post(
+            path_url=CONSTANTS.CREATE_ORDER_URL,
+            data=api_params,
+            is_auth_required=True
+        )
+
+        if order_result.get("error"):
+            raise IOError(f"Error submitting order {order_id}: {order_result.get('error')}")
+
+        exchange_order_id = str(order_result.get("order_id"))
+        return (exchange_order_id, self.current_timestamp)
+
+    async def _request_order_status(self, tracked_order: InFlightOrder) -> OrderUpdate:
+        """Requests order status from Strike."""
+        try:
+            exchange_order_id = tracked_order.exchange_order_id or await tracked_order.get_exchange_order_id()
+        except asyncio.TimeoutError:
+            exchange_order_id = None
+
+        params = {
+            "account_id": self.strike_perpetual_account_id,
+        }
+
+        if exchange_order_id:
+            params["order_id"] = exchange_order_id
+        else:
+            params["client_order_id"] = tracked_order.client_order_id
+
+        order_update = await self._api_get(
+            path_url=CONSTANTS.ORDER_STATUS_URL,
+            params=params,
+            is_auth_required=True
+        )
+
+        # Map Strike order status to Hummingbot OrderState
+        strike_status = order_update.get("Status", 0)
+        order_state = CONSTANTS.ORDER_STATE.get(strike_status, None)
+
+        _order_update: OrderUpdate = OrderUpdate(
+            trading_pair=tracked_order.trading_pair,
+            update_timestamp=order_update.get("CreateTimestamp", time.time()) / 1000,
+            new_state=order_state,
+            client_order_id=order_update.get("ClientOrderID", tracked_order.client_order_id),
+            exchange_order_id=str(order_update.get("ID", exchange_order_id)),
+        )
+        return _order_update
+
+    async def _iter_user_event_queue(self) -> AsyncIterable[Dict[str, any]]:
+        """Iterates over user event queue."""
+        while True:
+            try:
+                yield await self._user_stream_tracker.user_stream.get()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                self.logger().network(
+                    "Unknown error. Retrying after 1 seconds.",
+                    exc_info=True,
+                    app_warning_msg="Could not fetch user events from Strike. Check account ID and network connection.",
+                )
+                await self._sleep(1.0)
+
+    async def _user_stream_event_listener(self):
+        """Listens to user stream events."""
+        user_channels = [
+            CONSTANTS.USER_ORDERS_ENDPOINT_NAME,
+            CONSTANTS.USER_POSITIONS_ENDPOINT_NAME,
+            CONSTANTS.USER_BALANCE_ENDPOINT_NAME,
+        ]
+
+        async for event_message in self._iter_user_event_queue():
+            try:
+                if isinstance(event_message, dict):
+                    channel: str = event_message.get("channel", None)
+                    data = event_message.get("data", None)
+                elif event_message is asyncio.CancelledError:
+                    raise asyncio.CancelledError
+                else:
+                    raise Exception(event_message)
+
+                if channel not in user_channels:
+                    self.logger().error(f"Unexpected message in user stream: {event_message}.", exc_info=True)
+                    continue
+
+                if channel == CONSTANTS.USER_ORDERS_ENDPOINT_NAME:
+                    self._process_order_message(data)
+                elif channel == CONSTANTS.USER_POSITIONS_ENDPOINT_NAME:
+                    await self._process_position_message(data)
+                elif channel == CONSTANTS.USER_BALANCE_ENDPOINT_NAME:
+                    await self._process_balance_message(data)
+
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                self.logger().error("Unexpected error in user stream listener loop.", exc_info=True)
+                await self._sleep(5.0)
+
+    def _process_order_message(self, order_msg: Dict[str, Any]):
+        """Processes order update messages."""
+        client_order_id = str(order_msg.get("ClientOrderID", ""))
+        tracked_order = self._order_tracker.all_updatable_orders.get(client_order_id)
+
+        if not tracked_order:
+            self.logger().debug(f"Ignoring order message with id {client_order_id}: not in in_flight_orders.")
+            return
+
+        current_state = order_msg.get("Status", 0)
+        tracked_order.update_exchange_order_id(str(order_msg.get("ID")))
+
+        order_update: OrderUpdate = OrderUpdate(
+            trading_pair=tracked_order.trading_pair,
+            update_timestamp=order_msg.get("UpdateTimestamp", time.time()) / 1000,
+            new_state=CONSTANTS.ORDER_STATE.get(current_state),
+            client_order_id=client_order_id,
+            exchange_order_id=str(order_msg.get("ID")),
+        )
+        self._order_tracker.process_order_update(order_update=order_update)
+
+    async def _process_position_message(self, position_msg: Dict[str, Any]):
+        """Processes position update messages."""
+        # Update positions based on WebSocket messages
+        await self._update_positions()
+
+    async def _process_balance_message(self, balance_msg: Dict[str, Any]):
+        """Processes balance update messages."""
+        # Update balances based on WebSocket messages
+        await self._update_balances()
+
+    async def _format_trading_rules(self, exchange_info_dict: Any) -> List[TradingRule]:
+        """Formats trading rules from exchange info."""
+        # Placeholder - Strike should provide market configuration
+        return_val: list = []
+
+        # Create default trading rules for configured pairs
+        for trading_pair in self._trading_pairs:
+            return_val.append(
+                TradingRule(
+                    trading_pair,
+                    min_base_amount_increment=Decimal("0.000001"),
+                    min_price_increment=Decimal("0.0001"),
+                    min_order_size=Decimal("0.001"),
+                    buy_order_collateral_token=CONSTANTS.CURRENCY,
+                    sell_order_collateral_token=CONSTANTS.CURRENCY,
+                )
+            )
+
+        return return_val
+
+    async def _get_last_traded_price(self, trading_pair: str) -> float:
+        """Gets the last traded price for a trading pair."""
+        # Placeholder - Strike should provide ticker endpoint
+        return 0.0
+
+    async def _update_balances(self):
+        """Updates account balances."""
+        params = {"account_id": self.strike_perpetual_account_id}
+
+        account_info = await self._api_get(
+            path_url=CONSTANTS.ACCOUNT_INFO_URL,
+            params=params,
+            is_auth_required=True
+        )
+
+        # Strike uses USDT as the quote currency
+        quote = CONSTANTS.CURRENCY
+
+        # Update balances from Strike API response
+        # The /v2/account endpoint now includes balance data
+        wallet_balance = Decimal(str(account_info.get("wallet_balance", "0")))
+        available_balance = Decimal(str(account_info.get("available_balance", "0")))
+
+        self._account_balances[quote] = wallet_balance
+        self._account_available_balances[quote] = available_balance
+
+    async def _update_positions(self):
+        """Updates account positions."""
+        params = {
+            "account_id": self.strike_perpetual_account_id,
+        }
+
+        positions_response = await self._api_get(
+            path_url=CONSTANTS.POSITION_INFORMATION_URL,
+            params=params,
+            is_auth_required=True
+        )
+
+        positions = positions_response.get("positions", [])
+
+        for position_data in positions:
+            symbol = position_data.get("Symbol", "")
+            trading_pair = await self.trading_pair_associated_to_exchange_symbol(symbol)
+
+            size = Decimal(str(position_data.get("Size", "0")))
+            if size == 0:
+                continue
+
+            position_side = PositionSide.LONG if size > 0 else PositionSide.SHORT
+            unrealized_pnl = Decimal(str(position_data.get("UPnL", "0")))
+            entry_price = Decimal(str(position_data.get("EntryPrice", "0")))
+            leverage = Decimal(str(position_data.get("Leverage", "1")))
+
+            pos_key = self._perpetual_trading.position_key(trading_pair, position_side)
+
+            _position = Position(
+                trading_pair=trading_pair,
+                position_side=position_side,
+                unrealized_pnl=unrealized_pnl,
+                entry_price=entry_price,
+                amount=abs(size),
+                leverage=leverage
+            )
+            self._perpetual_trading.set_position(pos_key, _position)
+
+        # Remove positions that are no longer active
+        if not positions:
+            keys = list(self._perpetual_trading.account_positions.keys())
+            for key in keys:
+                self._perpetual_trading.remove_position(key)
+
+    async def _get_position_mode(self) -> Optional[PositionMode]:
+        """Gets the current position mode."""
+        return PositionMode.ONEWAY
+
+    async def _trading_pair_position_mode_set(self, mode: PositionMode, trading_pair: str) -> Tuple[bool, str]:
+        """Sets position mode for a trading pair."""
+        msg = ""
+        success = True
+        initial_mode = await self._get_position_mode()
+
+        if initial_mode != mode:
+            msg = "Strike only supports the ONEWAY position mode."
+            success = False
+
+        return success, msg
+
+    async def _set_trading_pair_leverage(self, trading_pair: str, leverage: int) -> Tuple[bool, str]:
+        """Sets leverage for a trading pair."""
+        # Placeholder - Strike should provide leverage setting endpoint
+        success = True
+        msg = ""
+
+        try:
+            # When Strike implements leverage setting, add API call here
+            pass
+        except Exception as exception:
+            success = False
+            msg = f"There was an error setting the leverage for {trading_pair} ({exception})"
+
+        return success, msg
+
+    async def _fetch_last_fee_payment(self, trading_pair: str) -> Tuple[float, Decimal, Decimal]:
+        """Fetches last funding fee payment."""
+        # Placeholder - Strike should provide funding payment history
+        timestamp = 0.0
+        funding_rate = Decimal("-1")
+        payment = Decimal("-1")
+
+        return timestamp, funding_rate, payment
+
+    async def _all_trade_updates_for_order(self, order: InFlightOrder) -> List[TradeUpdate]:
+        """Returns all trade updates for a specific order."""
+        # Strike connector uses WebSocket for real-time trade updates
+        # This method is not used as trades are processed via _user_stream_event_listener
+        return []
+
+    def _initialize_trading_pair_symbols_from_exchange_info(self, exchange_info: Dict[str, Any]):
+        """Initializes trading pair symbol mapping from exchange info."""
+        mapping = bidict()
+        # For Strike, we'll use the configured trading pairs
+        # This will be enhanced when Strike provides a markets/exchange info endpoint
+        if self._trading_pairs:
+            for trading_pair in self._trading_pairs:
+                # Convert BTC-USDT to BTCUSDT format for exchange symbol
+                exchange_symbol = trading_pair.replace("-", "")
+                mapping[exchange_symbol] = trading_pair
+        self._set_trading_pair_symbol_map(mapping)
