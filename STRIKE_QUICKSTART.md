@@ -4,7 +4,7 @@
 
 - **Strike v2 Backend**: Running on `http://localhost:8080`
 - **Strike Connector**: Installed at `hummingbot/connector/derivative/strike_perpetual/`
-- **Test Account**: `0199dc01-720d-7314-84d3-b3c3a102a9f9`
+- **Test Account**: `0199dc66-9e4a-747c-afe6-050709008b45`
 - **Test Balance**: $1,000.50 USDT
 - **Market**: BTCUSDT (trading enabled)
 
@@ -45,9 +45,9 @@ Once Hummingbot starts, in the CLI:
 
 **When prompted, enter:**
 
-1. **Strike account ID**: `0199dc01-720d-7314-84d3-b3c3a102a9f9`
+1. **Strike account ID**: `0199dc66-9e4a-747c-afe6-050709008b45`
 2. **Strike API base URL** (press Enter for default): `http://localhost:8080`
-3. **Strike WebSocket URL** (press Enter for default): `ws://localhost:8081/ws`
+3. **Strike WebSocket URL** (press Enter for default): `ws://localhost:8083/ws`
 
 ---
 
@@ -70,18 +70,23 @@ Once Hummingbot starts, in the CLI:
 
 ### Quick Test Strategy:
 
+**IMPORTANT: Use `perpetual_market_making` for Strike (not `pure_market_making`)**
+
 ```
 >>> create
 
 # Choose strategy
-What is your market making strategy? >>> pure_market_making
+What is your market making strategy? >>> perpetual_market_making
 
 # Configure
 Exchange >>> strike_perpetual
 Trading pair >>> BTC-USDT
+Leverage >>> 1
+Position mode >>> One-way
 Bid spread >>> 0.01
 Ask spread >>> 0.01
 Order amount >>> 0.001
+Order refresh time >>> 30
 ```
 
 ### Start Trading:
@@ -104,7 +109,8 @@ Order amount >>> 0.001
 ## 📍 Important URLs
 
 - **Strike API**: http://localhost:8080
-- **Strike WebSocket**: ws://localhost:8081/ws
+- **Strike WebSocket**: ws://localhost:8083/ws
+- **Strike UserStream Health**: http://localhost:8083/healthz
 - **API Health**: http://localhost:8080/healthz
 
 ---
@@ -152,17 +158,17 @@ tail -f logs/hummingbot_logs.log
 
 ### Check Account:
 ```bash
-curl "http://localhost:8080/v2/account?account_id=0199dc01-720d-7314-84d3-b3c3a102a9f9"
+curl "http://localhost:8080/v2/account?account_id=0199dc66-9e4a-747c-afe6-050709008b45"
 ```
 
 ### Check Positions:
 ```bash
-curl "http://localhost:8080/v2/positions?account_id=0199dc01-720d-7314-84d3-b3c3a102a9f9"
+curl "http://localhost:8080/v2/positions?account_id=0199dc66-9e4a-747c-afe6-050709008b45"
 ```
 
 ### Check Open Orders:
 ```bash
-curl "http://localhost:8080/v2/openOrders?account_id=0199dc01-720d-7314-84d3-b3c3a102a9f9"
+curl "http://localhost:8080/v2/openOrders?account_id=0199dc66-9e4a-747c-afe6-050709008b45"
 ```
 
 ---
@@ -170,15 +176,16 @@ curl "http://localhost:8080/v2/openOrders?account_id=0199dc01-720d-7314-84d3-b3c
 ## 📝 Your Configuration
 
 **Account Details:**
-- **Account ID**: `0199dc01-720d-7314-84d3-b3c3a102a9f9`
+- **Account ID**: `0199dc66-9e4a-747c-afe6-050709008b45`
 - **Balance**: $1,000.50 USDT
 - **Trading Pair**: BTC-USDT
 - **Market Status**: Trading
 
 **Strike Services:**
 - **API**: http://localhost:8080 ✅
-- **WebSocket**: ws://localhost:8081/ws ✅
+- **Engines**: http://localhost:8081 ✅
 - **Price Service**: http://localhost:8082 ✅
+- **UserStream (WebSocket)**: ws://localhost:8083/ws ✅
 
 ---
 

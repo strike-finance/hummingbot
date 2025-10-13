@@ -9,7 +9,7 @@ DOMAIN = EXCHANGE_NAME
 
 # Base URLs
 PERPETUAL_BASE_URL = "http://localhost:8080"
-PERPETUAL_WS_URL = "ws://localhost:8081/ws"
+PERPETUAL_WS_URL = "ws://localhost:8083/ws"
 
 FUNDING_RATE_UPDATE_INTERNAL_SECOND = 60
 
@@ -18,6 +18,7 @@ CURRENCY = "USDT"
 # REST API Endpoints
 PING_URL = "/healthz"
 EXCHANGE_INFO_URL = "/admin/market"
+MARKETS_URL = "/v2/markets"
 
 # Account endpoints
 ACCOUNT_INFO_URL = "/v2/account"
@@ -30,6 +31,9 @@ OPEN_ORDERS_URL = "/v2/openOrders"
 
 # Position endpoints
 POSITION_INFORMATION_URL = "/v2/positions"
+
+# Market data endpoints
+DEPTH_URL = "/v2/depth"
 
 # Asset endpoints
 DEPOSIT_URL = "/v2/deposit"
@@ -99,6 +103,8 @@ RATE_LIMITS = [
               linked_limits=[LinkedLimitWeightPair(ALL_ENDPOINTS_LIMIT)]),
     RateLimit(limit_id=EXCHANGE_INFO_URL, limit=MAX_REQUEST, time_interval=60,
               linked_limits=[LinkedLimitWeightPair(ALL_ENDPOINTS_LIMIT)]),
+    RateLimit(limit_id=MARKETS_URL, limit=MAX_REQUEST, time_interval=60,
+              linked_limits=[LinkedLimitWeightPair(ALL_ENDPOINTS_LIMIT)]),
 
     # Account endpoints
     RateLimit(limit_id=ACCOUNT_INFO_URL, limit=MAX_REQUEST, time_interval=60,
@@ -116,6 +122,10 @@ RATE_LIMITS = [
 
     # Position endpoints
     RateLimit(limit_id=POSITION_INFORMATION_URL, limit=MAX_REQUEST, time_interval=60,
+              linked_limits=[LinkedLimitWeightPair(ALL_ENDPOINTS_LIMIT)]),
+
+    # Market data endpoints
+    RateLimit(limit_id=DEPTH_URL, limit=MAX_REQUEST, time_interval=60,
               linked_limits=[LinkedLimitWeightPair(ALL_ENDPOINTS_LIMIT)]),
 
     # Asset endpoints

@@ -203,9 +203,11 @@ class StrikePerpetualDerivative(PerpetualDerivativePyBase):
 
     async def _update_trading_rules(self):
         """Updates trading rules from the exchange."""
-        # Placeholder implementation
-        # Strike backend should provide market configuration endpoint
-        pass
+        # Create default trading rules for configured pairs
+        trading_rules_list = await self._format_trading_rules({})
+        self._trading_rules.clear()
+        for trading_rule in trading_rules_list:
+            self._trading_rules[trading_rule.trading_pair] = trading_rule
 
     async def _initialize_trading_pair_symbol_map(self):
         """Initializes the trading pair symbol map."""

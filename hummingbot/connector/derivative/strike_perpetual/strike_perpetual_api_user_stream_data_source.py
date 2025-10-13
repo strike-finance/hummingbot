@@ -12,9 +12,7 @@ from hummingbot.core.web_assistant.ws_assistant import WSAssistant
 from hummingbot.logger import HummingbotLogger
 
 if TYPE_CHECKING:
-    from hummingbot.connector.derivative.strike_perpetual.strike_perpetual_derivative import (
-        StrikePerpetualDerivative,
-    )
+    from hummingbot.connector.derivative.strike_perpetual.strike_perpetual_derivative import StrikePerpetualDerivative
 
 
 class StrikePerpetualUserStreamDataSource(UserStreamTrackerDataSource):
@@ -134,13 +132,26 @@ class StrikePerpetualUserStreamDataSource(UserStreamTrackerDataSource):
         :param event_message: The event message to process
         :param queue: Queue to put processed messages
         """
+        # Skip if message is not a dict (e.g., subscription confirmations)
+        if not isinstance(event_message, dict):
+            self.logger().debug(f"Skipping non-dict message: {event_message}")
+            return
+
+        # Check for errors
         if event_message.get("error") is not None:
             err_msg = event_message.get("error", {}).get("message", event_message.get("error"))
             raise IOError({
                 "label": "WSS_ERROR",
                 "message": f"Error received via websocket - {err_msg}."
             })
-        elif event_message.get("channel") in [
+
+        # Skip subscription response messages (they have "result" field)
+        if "result" in event_message and "channel" not in event_message:
+            self.logger().debug(f"Skipping subscription response: {event_message}")
+            return
+
+        # Process user data messages
+        if event_message.get("channel") in [
             CONSTANTS.USER_ORDERS_ENDPOINT_NAME,
             CONSTANTS.USER_POSITIONS_ENDPOINT_NAME,
             CONSTANTS.USER_BALANCE_ENDPOINT_NAME,
