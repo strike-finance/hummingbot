@@ -5,6 +5,7 @@ from typing import Any, AsyncIterable, Dict, List, Optional, Tuple
 
 from bidict import bidict
 
+from hummingbot.connector.client_order_tracker import ClientOrderTracker
 from hummingbot.connector.constants import s_decimal_NaN
 from hummingbot.connector.derivative.position import Position
 from hummingbot.connector.derivative.strike_perpetual import (
@@ -241,6 +242,17 @@ class StrikePerpetualDerivative(PerpetualDerivativePyBase):
             domain=self.domain,
         )
 
+    def _create_order_tracker(self) -> ClientOrderTracker:
+        """
+        Creates the order tracker with aggressive lost order handling.
+
+        For perpetual markets, orders can be filled/cancelled very quickly,
+        so we use a lower threshold (1) to mark orders as lost sooner.
+        This prevents stale "order not found" warnings for orders that
+        were already filled or cancelled on the exchange.
+        """
+        return ClientOrderTracker(connector=self, lost_order_count_limit=1)
+
     async def _status_polling_loop_fetch_updates(self):
         """Fetches updates in the status polling loop."""
         await safe_gather(
@@ -287,21 +299,40 @@ class StrikePerpetualDerivative(PerpetualDerivativePyBase):
         pass
 
     async def _place_cancel(self, order_id: str, tracked_order: InFlightOrder):
-        """Places a cancel order request."""
+        """Places a cancel order request using Strike's order ID."""
+        # Get Strike's order_id (exchange order ID)
+        try:
+            exchange_order_id = tracked_order.exchange_order_id or await tracked_order.get_exchange_order_id()
+        except asyncio.TimeoutError:
+            # If we don't have the exchange order ID yet, we can't cancel
+            raise IOError("Cannot cancel order: exchange order ID not available yet")
+
         symbol = await self.exchange_symbol_associated_to_pair(trading_pair=tracked_order.trading_pair)
 
+        # Strike's cancel endpoint requires order_id (uint64) and symbol only
         api_params = {
-            "account_id": self.strike_perpetual_account_id,
-            "client_order_id": order_id,
+            "order_id": int(exchange_order_id),  # Convert to int for Strike's uint64 field
             "symbol": symbol,
         }
 
-        cancel_result = await self._api_delete(
-            path_url=CONSTANTS.CANCEL_ORDER_URL,
-            data=api_params,
-            is_auth_required=True
-        )
+        try:
+            cancel_result = await self._api_delete(
+                path_url=CONSTANTS.CANCEL_ORDER_URL,
+                data=api_params,
+                is_auth_required=True
+            )
+        except IOError as e:
+            # Strike API returns HTTP 404 when order not found
+            error_msg = str(e)
+            if "404" in error_msg or CONSTANTS.ORDER_NOT_EXIST_MESSAGE in error_msg.lower() or CONSTANTS.UNKNOWN_ORDER_MESSAGE in error_msg.lower():
+                self.logger().debug(f"The order {order_id} does not exist on Strike. No cancelation needed.")
+                await self._order_tracker.process_order_not_found(order_id)
+                # Re-raise with a message that matches our error detection pattern
+                raise IOError(CONSTANTS.UNKNOWN_ORDER_MESSAGE)
+            # For other HTTP errors, re-raise as-is
+            raise
 
+        # Check for errors in the response (for 200 OK responses with error field)
         if cancel_result.get("error"):
             self.logger().debug(f"The order {order_id} does not exist on Strike. No cancelation needed.")
             await self._order_tracker.process_order_not_found(order_id)
@@ -401,12 +432,18 @@ class StrikePerpetualDerivative(PerpetualDerivativePyBase):
         if order_type == OrderType.LIMIT:
             api_params["price"] = str(price)
 
-        order_result = await self._api_post(
-            path_url=CONSTANTS.CREATE_ORDER_URL,
-            data=api_params,
-            is_auth_required=True
-        )
+        try:
+            order_result = await self._api_post(
+                path_url=CONSTANTS.CREATE_ORDER_URL,
+                data=api_params,
+                is_auth_required=True
+            )
+        except IOError as e:
+            # Strike API may return HTTP errors for invalid orders
+            # Let the exception propagate with the original error message
+            raise IOError(f"Error submitting order {order_id}: {str(e)}")
 
+        # Check for errors in the response (for 200 OK responses with error field)
         if order_result.get("error"):
             raise IOError(f"Error submitting order {order_id}: {order_result.get('error')}")
 
@@ -414,26 +451,48 @@ class StrikePerpetualDerivative(PerpetualDerivativePyBase):
         return (exchange_order_id, self.current_timestamp)
 
     async def _request_order_status(self, tracked_order: InFlightOrder) -> OrderUpdate:
-        """Requests order status from Strike."""
+        """Requests order status from Strike using Strike's order ID."""
         try:
             exchange_order_id = tracked_order.exchange_order_id or await tracked_order.get_exchange_order_id()
         except asyncio.TimeoutError:
             exchange_order_id = None
 
+        symbol = await self.exchange_symbol_associated_to_pair(trading_pair=tracked_order.trading_pair)
+
         params = {
             "account_id": self.strike_perpetual_account_id,
+            "symbol": symbol,
         }
 
+        # Always prefer Strike's order_id over client_order_id for queries
         if exchange_order_id:
-            params["order_id"] = exchange_order_id
+            # Convert to int for Strike's uint64 field
+            params["order_id"] = int(exchange_order_id)
         else:
+            # Fallback to client_order_id only if exchange_order_id not yet available
             params["client_order_id"] = tracked_order.client_order_id
 
-        order_update = await self._api_get(
-            path_url=CONSTANTS.ORDER_STATUS_URL,
-            params=params,
-            is_auth_required=True
-        )
+        try:
+            order_update = await self._api_get(
+                path_url=CONSTANTS.ORDER_STATUS_URL,
+                params=params,
+                is_auth_required=True
+            )
+        except IOError as e:
+            # Strike API returns HTTP 404 with JSON error body when order not found
+            # The web assistant converts this to an IOError before we can parse the JSON
+            error_msg = str(e)
+            if "404" in error_msg or CONSTANTS.ORDER_NOT_EXIST_MESSAGE in error_msg.lower():
+                # Re-raise with a message that matches our error detection pattern
+                raise IOError(CONSTANTS.ORDER_NOT_EXIST_MESSAGE)
+            # For other HTTP errors, re-raise as-is
+            raise
+
+        # Check for errors in the response (for 200 OK responses with error field)
+        if order_update.get("error"):
+            error_msg = order_update.get("error")
+            self.logger().debug(f"Error fetching order {tracked_order.client_order_id}: {error_msg}")
+            raise IOError(f"Error fetching order status: {error_msg}")
 
         # Map Strike order status to Hummingbot OrderState
         strike_status = order_update.get("Status", 0)
@@ -558,11 +617,22 @@ class StrikePerpetualDerivative(PerpetualDerivativePyBase):
         """Updates account balances."""
         params = {"account_id": self.strike_perpetual_account_id}
 
-        account_info = await self._api_get(
-            path_url=CONSTANTS.ACCOUNT_INFO_URL,
-            params=params,
-            is_auth_required=True
-        )
+        try:
+            account_info = await self._api_get(
+                path_url=CONSTANTS.ACCOUNT_INFO_URL,
+                params=params,
+                is_auth_required=True
+            )
+        except IOError as e:
+            # Strike API returns HTTP 404 when account not found
+            error_msg = str(e)
+            if "404" in error_msg or "user not found" in error_msg.lower():
+                self.logger().warning(
+                    f"Account {self.strike_perpetual_account_id} not found on Strike. "
+                    f"Please verify the account ID is correct."
+                )
+            # Re-raise so base class can handle it with standard error logging
+            raise
 
         # Strike uses USDT as the quote currency
         quote = CONSTANTS.CURRENCY

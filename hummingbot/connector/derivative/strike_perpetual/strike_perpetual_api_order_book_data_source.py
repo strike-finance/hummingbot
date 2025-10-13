@@ -147,29 +147,14 @@ class StrikePerpetualAPIOrderBookDataSource(PerpetualAPIOrderBookDataSource):
                 if index_price == 0:
                     index_price = float(market_data.get("last_price", 0))
 
-                # Create synthetic orderbook with 0.1% spread around index price
-                if index_price > 0:
-                    spread = Decimal("0.001")  # 0.1% spread
-                    bid_price = Decimal(str(index_price)) * (Decimal("1") - spread)
-                    ask_price = Decimal(str(index_price)) * (Decimal("1") + spread)
+                # If all prices are still 0, raise an error
+                if index_price == 0:
+                    raise ValueError(
+                        f"No valid price data available for {trading_pair} from Strike API. "
+                        f"Cannot create orderbook without price information."
+                    )
 
-                    # Create minimal orderbook with small liquidity
-                    data = {
-                        "symbol": ex_trading_pair,
-                        "bids": [[str(bid_price), "1.0"]],
-                        "asks": [[str(ask_price), "1.0"]],
-                        "timestamp": int(time.time() * 1000),
-                        "lastUpdateId": int(time.time() * 1000)
-                    }
-                    self.logger().info(f"Created synthetic orderbook for {trading_pair} at index price {index_price}")
-                else:
-                    # No price data available, return empty
-                    data = {
-                        "symbol": ex_trading_pair,
-                        "bids": [],
-                        "asks": [],
-                        "timestamp": int(time.time() * 1000)
-                    }
+                # Create synthetic orderbook with 0.1% spread around index price
             except Exception as e:
                 self.logger().warning(f"Failed to create synthetic orderbook: {e}")
                 data = {

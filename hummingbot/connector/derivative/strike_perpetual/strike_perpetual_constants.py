@@ -2,7 +2,7 @@ from hummingbot.core.api_throttler.data_types import LinkedLimitWeightPair, Rate
 from hummingbot.core.data_type.in_flight_order import OrderState
 
 EXCHANGE_NAME = "strike_perpetual"
-BROKER_ID = "HBOT"
+BROKER_ID = ""
 MAX_ORDER_ID_LEN = 64
 
 DOMAIN = EXCHANGE_NAME
@@ -47,16 +47,16 @@ USER_POSITIONS_ENDPOINT_NAME = "positions"
 USER_BALANCE_ENDPOINT_NAME = "balance"
 
 # Order Types (from Strike API)
-ORDER_TYPE_MARKET = 1
-ORDER_TYPE_LIMIT = 2
-ORDER_TYPE_STOP = 3
-ORDER_TYPE_STOP_LIMIT = 4
-ORDER_TYPE_TAKE_PROFIT = 5
-ORDER_TYPE_TAKE_PROFIT_LIMIT = 6
+ORDER_TYPE_MARKET = "market"
+ORDER_TYPE_LIMIT = "limit"
+ORDER_TYPE_STOP = "stop"
+ORDER_TYPE_STOP_LIMIT = "stop_limit"
+ORDER_TYPE_TAKE_PROFIT = "take_profit"
+ORDER_TYPE_TAKE_PROFIT_LIMIT = "take_profit_limit"
 
 # Order Sides (from Strike API)
-ORDER_SIDE_BUY = 1
-ORDER_SIDE_SELL = 2
+ORDER_SIDE_BUY = "buy"
+ORDER_SIDE_SELL = "sell"
 
 # Order Status (from Strike API documentation)
 ORDER_STATUS_NONE = 0
@@ -81,13 +81,13 @@ ORDER_STATE = {
 }
 
 # Time in Force
-TIME_IN_FORCE_GTC = 1
-TIME_IN_FORCE_IOC = 2
-TIME_IN_FORCE_FOK = 3
+TIME_IN_FORCE_GTC = "GTC"
+TIME_IN_FORCE_IOC = "IOC"
+TIME_IN_FORCE_FOK = "FOK"
 
 # Margin Modes
-MARGIN_MODE_CROSS = 1
-MARGIN_MODE_ISOLATED = 2
+MARGIN_MODE_CROSS = "cross"
+MARGIN_MODE_ISOLATED = "isolated"
 
 HEARTBEAT_TIME_INTERVAL = 30.0
 

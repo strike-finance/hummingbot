@@ -181,7 +181,10 @@ class OrderCandidate:
     def _adjust_for_order_collateral(self, available_balances: Dict[str, Decimal]):
         if self.order_collateral is not None:
             token, amount = self.order_collateral
-            if not amount.is_nan() and available_balances[token] < amount:
+            if (token in available_balances and
+                not amount.is_nan() and
+                not available_balances[token].is_nan() and
+                    available_balances[token] < amount):
                 scaler = available_balances[token] / amount
                 self._scale_order(scaler)
 
@@ -190,7 +193,11 @@ class OrderCandidate:
             token, amount = self.percent_fee_collateral
             if token == self.order_collateral.token:
                 amount += self.order_collateral.amount
-            if available_balances[token] < amount:
+            # Check for valid token and amount before comparison
+            if (token in available_balances and
+                not amount.is_nan() and
+                not available_balances[token].is_nan() and
+                    available_balances[token] < amount):
                 scaler = available_balances[token] / amount
                 self._scale_order(scaler)
 
@@ -201,7 +208,12 @@ class OrderCandidate:
 
         for collateral_entry in self.fixed_fee_collaterals:
             ffc_token, ffc_amount = collateral_entry
+            # Check if token exists in available balances
+            if ffc_token not in available_balances:
+                continue
             available_balance = available_balances[ffc_token]
+            if available_balance.is_nan() or ffc_amount.is_nan():
+                continue
             if available_balance < ffc_amount:
                 self._scale_order(scaler=Decimal("0"))
                 break

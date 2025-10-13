@@ -4,7 +4,7 @@
 
 - **Strike v2 Backend**: Running on `http://localhost:8080`
 - **Strike Connector**: Installed at `hummingbot/connector/derivative/strike_perpetual/`
-- **Test Account**: `0199dc66-9e4a-747c-afe6-050709008b45`
+- **Test Account**: `0199e127-9b4d-7964-9c19-857ca75d358a`
 - **Test Balance**: $1,000.50 USDT
 - **Market**: BTCUSDT (trading enabled)
 
@@ -45,7 +45,7 @@ Once Hummingbot starts, in the CLI:
 
 **When prompted, enter:**
 
-1. **Strike account ID**: `0199dc66-9e4a-747c-afe6-050709008b45`
+1. **Strike account ID**: `0199e127-9b4d-7964-9c19-857ca75d358a`
 2. **Strike API base URL** (press Enter for default): `http://localhost:8080`
 3. **Strike WebSocket URL** (press Enter for default): `ws://localhost:8083/ws`
 
@@ -158,17 +158,17 @@ tail -f logs/hummingbot_logs.log
 
 ### Check Account:
 ```bash
-curl "http://localhost:8080/v2/account?account_id=0199dc66-9e4a-747c-afe6-050709008b45"
+curl "http://localhost:8080/v2/account?account_id=0199e127-9b4d-7964-9c19-857ca75d358a"
 ```
 
 ### Check Positions:
 ```bash
-curl "http://localhost:8080/v2/positions?account_id=0199dc66-9e4a-747c-afe6-050709008b45"
+curl "http://localhost:8080/v2/positions?account_id=0199e127-9b4d-7964-9c19-857ca75d358a"
 ```
 
 ### Check Open Orders:
 ```bash
-curl "http://localhost:8080/v2/openOrders?account_id=0199dc66-9e4a-747c-afe6-050709008b45"
+curl "http://localhost:8080/v2/openOrders?account_id=0199e127-9b4d-7964-9c19-857ca75d358a"
 ```
 
 ---
@@ -176,7 +176,7 @@ curl "http://localhost:8080/v2/openOrders?account_id=0199dc66-9e4a-747c-afe6-050
 ## 📝 Your Configuration
 
 **Account Details:**
-- **Account ID**: `0199dc66-9e4a-747c-afe6-050709008b45`
+- **Account ID**: `0199e127-9b4d-7964-9c19-857ca75d358a`
 - **Balance**: $1,000.50 USDT
 - **Trading Pair**: BTC-USDT
 - **Market Status**: Trading
