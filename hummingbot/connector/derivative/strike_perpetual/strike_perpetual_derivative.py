@@ -216,8 +216,8 @@ class StrikePerpetualDerivative(PerpetualDerivativePyBase):
             # Placeholder - Strike should provide a symbols endpoint
             mapping = bidict()
             for trading_pair in self._trading_pairs:
-                # For now, use direct mapping
-                exchange_symbol = trading_pair.replace("-", "")
+                # Strike uses symbols with hyphens (e.g., ADA-USDT)
+                exchange_symbol = trading_pair  # Keep the hyphen
                 mapping[exchange_symbol] = trading_pair
             self._set_trading_pair_symbol_map(mapping)
         except Exception:
@@ -743,7 +743,7 @@ class StrikePerpetualDerivative(PerpetualDerivativePyBase):
         # This will be enhanced when Strike provides a markets/exchange info endpoint
         if self._trading_pairs:
             for trading_pair in self._trading_pairs:
-                # Convert BTC-USDT to BTCUSDT format for exchange symbol
-                exchange_symbol = trading_pair.replace("-", "")
+                # Strike uses symbols with hyphens (e.g., ADA-USDT)
+                exchange_symbol = trading_pair  # Keep the hyphen
                 mapping[exchange_symbol] = trading_pair
         self._set_trading_pair_symbol_map(mapping)
