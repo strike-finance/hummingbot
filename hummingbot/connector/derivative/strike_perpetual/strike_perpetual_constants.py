@@ -8,16 +8,16 @@ MAX_ORDER_ID_LEN = 64
 DOMAIN = EXCHANGE_NAME
 
 # Base URLs
-PERPETUAL_BASE_URL = "http://localhost:8080"
+PERPETUAL_BASE_URL = "http://localhost:8080"  # Trading API
+PERPETUAL_PRICE_URL = "http://localhost:8082"  # Market Data API
 PERPETUAL_WS_URL = "ws://localhost:8083/ws"
 
 FUNDING_RATE_UPDATE_INTERNAL_SECOND = 60
 
 CURRENCY = "USDT"
 
-# REST API Endpoints
+# REST API Endpoints (Trading API - Port 8080)
 PING_URL = "/healthz"
-EXCHANGE_INFO_URL = "/admin/market"
 MARKETS_URL = "/v2/markets"
 
 # Account endpoints
@@ -38,6 +38,12 @@ DEPTH_URL = "/v2/depth"
 # Asset endpoints
 DEPOSIT_URL = "/v2/deposit"
 WITHDRAW_URL = "/v2/withdraw"
+
+# Market Data endpoints (Price Service - Port 8082)
+EXCHANGE_INFO_URL = "/v2/exchangeInfo"
+TICKER_BOOK_URL = "/v2/ticker/bookTicker"
+TICKER_PRICE_URL = "/v2/ticker/price"
+PREMIUM_INDEX_URL = "/v2/premiumIndex"
 
 # WebSocket channels
 TRADES_ENDPOINT_NAME = "trades"
@@ -68,8 +74,9 @@ ORDER_STATUS_UNTRIGGERED = 5
 ORDER_STATUS_REJECTED = 6
 ORDER_STATUS_EXPIRED = 7
 
-# Order State Mapping
+# Order State Mapping (supports both numeric and string statuses)
 ORDER_STATE = {
+    # Numeric codes
     0: OrderState.PENDING_CREATE,      # NONE
     1: OrderState.PENDING_CREATE,      # PENDING
     2: OrderState.OPEN,                # OPEN (active on orderbook)
@@ -78,6 +85,16 @@ ORDER_STATE = {
     5: OrderState.OPEN,                # UNTRIGGERED (conditional orders)
     6: OrderState.FAILED,              # REJECTED
     7: OrderState.CANCELED,            # EXPIRED
+    # String statuses (returned by v2 API)
+    "none": OrderState.PENDING_CREATE,
+    "pending": OrderState.PENDING_CREATE,
+    "open": OrderState.OPEN,
+    "filled": OrderState.FILLED,
+    "canceled": OrderState.CANCELED,
+    "cancelled": OrderState.CANCELED,  # British spelling
+    "untriggered": OrderState.OPEN,
+    "rejected": OrderState.FAILED,
+    "expired": OrderState.CANCELED,
 }
 
 # Time in Force

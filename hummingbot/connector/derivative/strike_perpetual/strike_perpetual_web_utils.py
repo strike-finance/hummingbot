@@ -42,15 +42,41 @@ def public_rest_url(path_url: str, domain: str = CONSTANTS.DOMAIN) -> str:
     return rest_url(path_url, domain)
 
 
-def rest_url(path_url: str, domain: str = CONSTANTS.DOMAIN) -> str:
+def rest_url(path_url: str, domain: str = CONSTANTS.DOMAIN, base_url: Optional[str] = None) -> str:
     """
     Builds the complete REST API URL.
+    Routes requests to the appropriate service based on the endpoint.
+
+    Market data endpoints go to Price Service (port 8082):
+    - /v2/depth, /v2/trades, /v2/ticker/*, /v2/exchangeInfo, /v2/premiumIndex, /v2/klines
+
+    All other endpoints go to Trading API (port 8080):
+    - /v2/order, /v2/account, /v2/positions, etc.
 
     :param path_url: The API endpoint path
     :param domain: The exchange domain
+    :param base_url: Optional override for base URL
     :return: The complete URL
     """
-    base_url = CONSTANTS.PERPETUAL_BASE_URL
+    if base_url is None:
+        # Determine which service to use based on the endpoint
+        market_data_endpoints = [
+            "/v2/depth",
+            "/v2/trades",
+            "/v2/ticker/",
+            "/v2/exchangeInfo",
+            "/v2/premiumIndex",
+            "/v2/klines",
+        ]
+
+        # Check if this is a market data endpoint
+        is_market_data = any(path_url.startswith(endpoint) for endpoint in market_data_endpoints)
+
+        if is_market_data:
+            base_url = CONSTANTS.PERPETUAL_PRICE_URL  # Port 8082 - Price Service
+        else:
+            base_url = CONSTANTS.PERPETUAL_BASE_URL  # Port 8080 - Trading API
+
     return base_url + path_url
 
 

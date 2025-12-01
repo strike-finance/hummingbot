@@ -1,5 +1,4 @@
 from decimal import Decimal
-from typing import Optional
 
 from pydantic import ConfigDict, Field, SecretStr
 
@@ -34,6 +33,15 @@ class StrikePerpetualConfigMap(BaseConnectorConfigMap):
             "prompt_on_new": True,
         }
     )
+    strike_perpetual_api_key: SecretStr = Field(
+        default=...,
+        json_schema_extra={
+            "prompt": "Enter your Strike API key (for bot authentication)",
+            "is_secure": True,
+            "is_connect_key": True,
+            "prompt_on_new": True,
+        }
+    )
     strike_perpetual_base_url: str = Field(
         default="http://localhost:8080",
         json_schema_extra={
@@ -44,9 +52,18 @@ class StrikePerpetualConfigMap(BaseConnectorConfigMap):
         }
     )
     strike_perpetual_ws_url: str = Field(
-        default="ws://localhost:8081/ws",
+        default="ws://localhost:8083/ws",
         json_schema_extra={
-            "prompt": "Enter Strike WebSocket URL (default: ws://localhost:8081/ws)",
+            "prompt": "Enter Strike WebSocket URL (default: ws://localhost:8083/ws)",
+            "is_secure": False,
+            "is_connect_key": False,
+            "prompt_on_new": False,
+        }
+    )
+    strike_perpetual_price_url: str = Field(
+        default="http://localhost:8082",
+        json_schema_extra={
+            "prompt": "Enter Strike Price Service URL (default: http://localhost:8082)",
             "is_secure": False,
             "is_connect_key": False,
             "prompt_on_new": False,

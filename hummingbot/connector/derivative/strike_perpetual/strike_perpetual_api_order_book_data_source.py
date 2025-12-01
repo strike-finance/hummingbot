@@ -154,7 +154,36 @@ class StrikePerpetualAPIOrderBookDataSource(PerpetualAPIOrderBookDataSource):
                         f"Cannot create orderbook without price information."
                     )
 
-                # Create synthetic orderbook with 0.1% spread around index price
+                # Create synthetic orderbook with 0.2% spread around index price
+                spread_pct = 0.002  # 0.2%
+                bid_price = index_price * (1 - spread_pct)
+                ask_price = index_price * (1 + spread_pct)
+
+                # Create a ladder of orders with increasing size
+                bids = []
+                asks = []
+                for i in range(5):
+                    level_spread = i * 0.001  # 0.1% between levels
+                    size = str(100 * (i + 1))  # Increasing size
+
+                    bid_level_price = bid_price * (1 - level_spread)
+                    ask_level_price = ask_price * (1 + level_spread)
+
+                    bids.append([str(round(bid_level_price, 4)), size])
+                    asks.append([str(round(ask_level_price, 4)), size])
+
+                data = {
+                    "symbol": ex_trading_pair,
+                    "bids": bids,
+                    "asks": asks,
+                    "timestamp": int(time.time() * 1000)
+                }
+
+                self.logger().info(
+                    f"Created synthetic orderbook for {trading_pair} at {index_price} "
+                    f"(bid: {bids[0][0]}, ask: {asks[0][0]})"
+                )
+
             except Exception as e:
                 self.logger().warning(f"Failed to create synthetic orderbook: {e}")
                 data = {
@@ -192,7 +221,7 @@ class StrikePerpetualAPIOrderBookDataSource(PerpetualAPIOrderBookDataSource):
 
         :return: Connected WSAssistant
         """
-        url = web_utils.wss_url(self._domain)
+        url = self._connector.strike_perpetual_ws_url
         ws: WSAssistant = await self._api_factory.get_ws_assistant()
         await ws.connect(ws_url=url, ping_timeout=CONSTANTS.HEARTBEAT_TIME_INTERVAL)
         return ws

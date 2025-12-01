@@ -24,7 +24,7 @@ from hummingbot.connector.trading_rule import TradingRule
 from hummingbot.connector.utils import get_new_client_order_id
 from hummingbot.core.api_throttler.data_types import RateLimit
 from hummingbot.core.data_type.common import OrderType, PositionAction, PositionMode, PositionSide, TradeType
-from hummingbot.core.data_type.in_flight_order import InFlightOrder, OrderUpdate, TradeUpdate
+from hummingbot.core.data_type.in_flight_order import InFlightOrder, OrderState, OrderUpdate, TradeUpdate
 from hummingbot.core.data_type.order_book_tracker_data_source import OrderBookTrackerDataSource
 from hummingbot.core.data_type.trade_fee import TradeFeeBase
 from hummingbot.core.data_type.user_stream_tracker_data_source import UserStreamTrackerDataSource
@@ -48,8 +48,10 @@ class StrikePerpetualDerivative(PerpetualDerivativePyBase):
         balance_asset_limit: Optional[Dict[str, Dict[str, Decimal]]] = None,
         rate_limits_share_pct: Decimal = Decimal("100"),
         strike_perpetual_account_id: str = None,
+        strike_perpetual_api_key: str = None,
         strike_perpetual_base_url: str = CONSTANTS.PERPETUAL_BASE_URL,
         strike_perpetual_ws_url: str = CONSTANTS.PERPETUAL_WS_URL,
+        strike_perpetual_price_url: str = CONSTANTS.PERPETUAL_PRICE_URL,
         trading_pairs: Optional[List[str]] = None,
         trading_required: bool = True,
         domain: str = CONSTANTS.DOMAIN,
@@ -60,20 +62,30 @@ class StrikePerpetualDerivative(PerpetualDerivativePyBase):
         :param balance_asset_limit: Optional balance limits per asset
         :param rate_limits_share_pct: Percentage of rate limits to use
         :param strike_perpetual_account_id: Strike account ID
-        :param strike_perpetual_base_url: Base URL for Strike API
-        :param strike_perpetual_ws_url: WebSocket URL for Strike
+        :param strike_perpetual_api_key: Strike API key for bot authentication
+        :param strike_perpetual_base_url: Base URL for Strike Trading API (default: http://localhost:8080)
+        :param strike_perpetual_ws_url: WebSocket URL for Strike UserStream (default: ws://localhost:8083/ws)
+        :param strike_perpetual_price_url: Base URL for Strike Price Service (default: http://localhost:8082)
         :param trading_pairs: List of trading pairs to track
         :param trading_required: Whether trading is required
         :param domain: The exchange domain
         """
         self.strike_perpetual_account_id = strike_perpetual_account_id
+        self.strike_perpetual_api_key = strike_perpetual_api_key
         self.strike_perpetual_base_url = strike_perpetual_base_url
         self.strike_perpetual_ws_url = strike_perpetual_ws_url
+        self.strike_perpetual_price_url = strike_perpetual_price_url
         self._trading_required = trading_required
         self._trading_pairs = trading_pairs
         self._domain = domain
         self._position_mode = None
         self._last_trade_history_timestamp = None
+
+        # Update constants with user-provided URLs
+        CONSTANTS.PERPETUAL_BASE_URL = strike_perpetual_base_url
+        CONSTANTS.PERPETUAL_WS_URL = strike_perpetual_ws_url
+        CONSTANTS.PERPETUAL_PRICE_URL = strike_perpetual_price_url
+
         super().__init__(balance_asset_limit, rate_limits_share_pct)
 
     @property
@@ -84,8 +96,13 @@ class StrikePerpetualDerivative(PerpetualDerivativePyBase):
     @property
     def authenticator(self) -> Optional[StrikePerpetualAuth]:
         """Returns the authenticator instance."""
-        if self._trading_required:
-            return StrikePerpetualAuth(self.strike_perpetual_account_id)
+        # Always return authenticator if account_id is provided
+        # We need authentication even for read-only operations like balance checks
+        if self.strike_perpetual_account_id:
+            return StrikePerpetualAuth(
+                account_id=self.strike_perpetual_account_id,
+                api_key=self.strike_perpetual_api_key
+            )
         return None
 
     @property
@@ -164,6 +181,65 @@ class StrikePerpetualDerivative(PerpetualDerivativePyBase):
         """Returns the collateral token for sell orders."""
         trading_rule: TradingRule = self._trading_rules[trading_pair]
         return trading_rule.sell_order_collateral_token
+
+    def get_price(self, trading_pair: str, is_buy: bool) -> Decimal:
+        """
+        Override get_price to handle USD/USDT equivalence.
+        Strike uses USDT as collateral but trading pairs use USD as quote.
+        """
+        # Handle USD-USDT conversion
+        # For now, treat as 1:1 but this could be enhanced to fetch real USDT/USD rate
+        # from an external source (e.g., Binance, CoinGecko) for more accuracy
+        if trading_pair in ["USD-USDT", "USDT-USD"]:
+            # TODO: For pmm_dynamic, consider fetching real-time USDT/USD rate
+            # from a reference exchange like Binance or using an oracle
+            return self._get_usdt_usd_reference_price()
+
+        # Convert USDT-based pairs to USD-based pairs (e.g., ADA-USDT -> ADA-USD)
+        # since Strike trading pairs use USD but collateral is USDT
+        if "-USDT" in trading_pair:
+            converted_pair = trading_pair.replace("-USDT", "-USD")
+            # Check if the USD version exists
+            if converted_pair in self.order_book_tracker.order_books:
+                return super().get_price(converted_pair, is_buy)
+
+        # Similarly handle USDT-XXX -> USD-XXX
+        if "USDT-" in trading_pair:
+            converted_pair = trading_pair.replace("USDT-", "USD-")
+            if converted_pair in self.order_book_tracker.order_books:
+                # For inverse pairs, we need to invert the price
+                price = super().get_price(converted_pair, not is_buy)
+                return Decimal("1") / price if price > 0 else Decimal("0")
+
+        # For all other pairs, use the parent implementation
+        return super().get_price(trading_pair, is_buy)
+
+    def _get_usdt_usd_reference_price(self) -> Decimal:
+        """
+        Get the USDT/USD reference price for accurate collateral calculations.
+
+        For now, returns 1.0 (1:1 peg assumption).
+
+        Future enhancement: Fetch real-time USDT/USD rate from:
+        - Binance USDT/USD spot price
+        - Aggregated stablecoin index
+        - On-chain oracle price
+
+        This is especially important for pmm_dynamic strategy where
+        precise collateral valuations affect order sizing.
+
+        :return: USDT/USD conversion rate
+        """
+        # Default 1:1 assumption (USDT and USD are pegged)
+        # In reality, USDT can trade slightly above or below $1.00
+        # A typical range is 0.998 - 1.002
+
+        # TODO: Implement real-time USDT/USD price fetching
+        # Example: Could use Binance API or CoinGecko
+        # if hasattr(self, '_usdt_usd_override'):
+        #     return Decimal(str(self._usdt_usd_override))
+
+        return Decimal("1.0")
 
     def _is_request_exception_related_to_time_synchronizer(self, request_exception: Exception):
         """Checks if exception is related to time synchronization."""
@@ -496,7 +572,10 @@ class StrikePerpetualDerivative(PerpetualDerivativePyBase):
 
         # Map Strike order status to Hummingbot OrderState
         strike_status = order_update.get("Status", 0)
-        order_state = CONSTANTS.ORDER_STATE.get(strike_status, None)
+        order_state = CONSTANTS.ORDER_STATE.get(strike_status)
+        if order_state is None:
+            self.logger().warning(f"Unknown order status {strike_status} for order {tracked_order.client_order_id}, defaulting to OPEN")
+            order_state = OrderState.OPEN
 
         _order_update: OrderUpdate = OrderUpdate(
             trading_pair=tracked_order.trading_pair,
@@ -569,10 +648,16 @@ class StrikePerpetualDerivative(PerpetualDerivativePyBase):
         current_state = order_msg.get("Status", 0)
         tracked_order.update_exchange_order_id(str(order_msg.get("ID")))
 
+        # Map Strike order status to Hummingbot OrderState
+        order_state = CONSTANTS.ORDER_STATE.get(current_state)
+        if order_state is None:
+            self.logger().warning(f"Unknown order status {current_state} for order {client_order_id}, defaulting to OPEN")
+            order_state = OrderState.OPEN
+
         order_update: OrderUpdate = OrderUpdate(
             trading_pair=tracked_order.trading_pair,
             update_timestamp=order_msg.get("UpdateTimestamp", time.time()) / 1000,
-            new_state=CONSTANTS.ORDER_STATE.get(current_state),
+            new_state=order_state,
             client_order_id=client_order_id,
             exchange_order_id=str(order_msg.get("ID")),
         )
@@ -660,15 +745,27 @@ class StrikePerpetualDerivative(PerpetualDerivativePyBase):
         positions = positions_response.get("positions", [])
 
         for position_data in positions:
-            symbol = position_data.get("Symbol", "")
-            trading_pair = await self.trading_pair_associated_to_exchange_symbol(symbol)
+            # API returns lowercase field names
+            symbol = position_data.get("symbol", "")
+
+            # Skip positions with empty symbols
+            if not symbol:
+                self.logger().debug(f"Skipping position with empty symbol: {position_data}")
+                continue
+
+            # Skip positions for symbols not being traded by this bot
+            try:
+                trading_pair = await self.trading_pair_associated_to_exchange_symbol(symbol)
+            except KeyError:
+                self.logger().debug(f"Skipping position for {symbol} - not in trading pairs list")
+                continue
 
             size = Decimal(str(position_data.get("Size", "0")))
             if size == 0:
                 continue
 
             position_side = PositionSide.LONG if size > 0 else PositionSide.SHORT
-            unrealized_pnl = Decimal(str(position_data.get("UPnL", "0")))
+            unrealized_pnl = Decimal(str(position_data.get("upnl", "0")))
             entry_price = Decimal(str(position_data.get("EntryPrice", "0")))
             leverage = Decimal(str(position_data.get("Leverage", "1")))
 

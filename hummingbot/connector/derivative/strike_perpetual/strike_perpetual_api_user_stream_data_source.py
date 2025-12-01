@@ -2,7 +2,6 @@ import asyncio
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 import hummingbot.connector.derivative.strike_perpetual.strike_perpetual_constants as CONSTANTS
-import hummingbot.connector.derivative.strike_perpetual.strike_perpetual_web_utils as web_utils
 from hummingbot.core.data_type.user_stream_tracker_data_source import UserStreamTrackerDataSource
 from hummingbot.core.utils.async_utils import safe_ensure_future
 from hummingbot.core.web_assistant.auth import AuthBase
@@ -69,7 +68,7 @@ class StrikePerpetualUserStreamDataSource(UserStreamTrackerDataSource):
         :return: Connected WSAssistant
         """
         ws: WSAssistant = await self._get_ws_assistant()
-        url = web_utils.wss_url(self._domain)
+        url = self._connector.strike_perpetual_ws_url
         await ws.connect(ws_url=url, ping_timeout=self.HEARTBEAT_TIME_INTERVAL)
         safe_ensure_future(self._ping_thread(ws))
         return ws
