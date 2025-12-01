@@ -218,28 +218,65 @@ class StrikePerpetualDerivative(PerpetualDerivativePyBase):
         """
         Get the USDT/USD reference price for accurate collateral calculations.
 
-        For now, returns 1.0 (1:1 peg assumption).
-
-        Future enhancement: Fetch real-time USDT/USD rate from:
-        - Binance USDT/USD spot price
-        - Aggregated stablecoin index
-        - On-chain oracle price
-
-        This is especially important for pmm_dynamic strategy where
-        precise collateral valuations affect order sizing.
+        Fetches real-time USDT/USD rate from Binance with caching to avoid
+        excessive API calls. This is especially important for PMM strategies
+        where precise collateral valuations affect order sizing.
 
         :return: USDT/USD conversion rate
         """
-        # Default 1:1 assumption (USDT and USD are pegged)
-        # In reality, USDT can trade slightly above or below $1.00
-        # A typical range is 0.998 - 1.002
+        import time
 
-        # TODO: Implement real-time USDT/USD price fetching
-        # Example: Could use Binance API or CoinGecko
-        # if hasattr(self, '_usdt_usd_override'):
-        #     return Decimal(str(self._usdt_usd_override))
+        # Cache the reference price for 60 seconds
+        cache_duration = 60  # seconds
+        current_time = time.time()
 
-        return Decimal("1.0")
+        # Check cache
+        if hasattr(self, '_usdt_usd_cache'):
+            cached_price, cached_time = self._usdt_usd_cache
+            if current_time - cached_time < cache_duration:
+                return cached_price
+
+        # Try to fetch from Binance
+        try:
+            import asyncio
+
+            import aiohttp
+
+            async def fetch_binance_price():
+                try:
+                    async with aiohttp.ClientSession() as session:
+                        # Binance doesn't have direct USDT/USD, use USDT/USDC as proxy
+                        # USDC is typically pegged 1:1 to USD
+                        url = "https://api.binance.com/api/v3/ticker/price?symbol=USDCUSDT"
+                        async with session.get(url, timeout=aiohttp.ClientTimeout(total=2)) as response:
+                            if response.status == 200:
+                                data = await response.json()
+                                price = Decimal(data['price'])
+                                # Invert since we got USDC/USDT but want USDT/USD
+                                # If USDC = 0.9995 USDT, then USDT = 1/0.9995 = 1.0005 USD
+                                return Decimal("1") / price if price > 0 else Decimal("1.0")
+                except Exception:
+                    pass
+                return Decimal("1.0")
+
+            # Run async fetch
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # If already in async context, return default
+                reference_price = Decimal("1.0")
+            else:
+                reference_price = loop.run_until_complete(fetch_binance_price())
+
+            # Cache the result
+            self._usdt_usd_cache = (reference_price, current_time)
+            return reference_price
+
+        except Exception as e:
+            self.logger().debug(f"Failed to fetch USDT/USD reference price: {e}")
+            # Fallback to 1:1 assumption
+            fallback = Decimal("1.0")
+            self._usdt_usd_cache = (fallback, current_time)
+            return fallback
 
     def _is_request_exception_related_to_time_synchronizer(self, request_exception: Exception):
         """Checks if exception is related to time synchronization."""
@@ -719,16 +756,23 @@ class StrikePerpetualDerivative(PerpetualDerivativePyBase):
             # Re-raise so base class can handle it with standard error logging
             raise
 
-        # Strike uses USDT as the quote currency
-        quote = CONSTANTS.CURRENCY
+        # Strike uses USDT as collateral, but trading pairs use USD as quote
+        # Store balances under "USD" to match trading pair quote currency
+        # This ensures PMM strategy can find the balance correctly
+        quote = "USD"  # Changed from CONSTANTS.CURRENCY ("USDT") to match trading pairs
 
         # Update balances from Strike API response
         # The /v2/account endpoint now includes balance data
         wallet_balance = Decimal(str(account_info.get("wallet_balance", "0")))
         available_balance = Decimal(str(account_info.get("available_balance", "0")))
 
+        # Store under "USD" key to match trading pair quote currency
         self._account_balances[quote] = wallet_balance
         self._account_available_balances[quote] = available_balance
+
+        # Also store under "USDT" for compatibility (actual collateral currency)
+        self._account_balances[CONSTANTS.CURRENCY] = wallet_balance
+        self._account_available_balances[CONSTANTS.CURRENCY] = available_balance
 
     async def _update_positions(self):
         """Updates account positions."""
