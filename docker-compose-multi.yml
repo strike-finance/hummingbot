@@ -1,0 +1,100 @@
+# Docker Compose for running multiple Hummingbot market makers
+# Usage:
+#   docker-compose -f docker-compose-multi.yml up -d       # Start all bots
+#   docker-compose -f docker-compose-multi.yml down        # Stop all bots
+#   docker attach hummingbot-btc                           # Attach to BTC bot
+#   Ctrl+P then Ctrl+Q to detach without stopping
+
+services:
+  hummingbot-btc:
+    container_name: hummingbot-btc
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - ./conf:/home/hummingbot/conf
+      - ./logs/btc:/home/hummingbot/logs
+      - ./data/btc:/home/hummingbot/data
+      - ./scripts:/home/hummingbot/scripts
+      - ./controllers:/home/hummingbot/controllers
+    environment:
+      - CONFIG_FILE_NAME=btc_usd_mm.yml
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
+    tty: true
+    stdin_open: true
+    network_mode: host
+    restart: unless-stopped
+
+  hummingbot-eth:
+    container_name: hummingbot-eth
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - ./conf:/home/hummingbot/conf
+      - ./logs/eth:/home/hummingbot/logs
+      - ./data/eth:/home/hummingbot/data
+      - ./scripts:/home/hummingbot/scripts
+      - ./controllers:/home/hummingbot/controllers
+    environment:
+      - CONFIG_FILE_NAME=eth_usd_mm.yml
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
+    tty: true
+    stdin_open: true
+    network_mode: host
+    restart: unless-stopped
+
+  hummingbot-sol:
+    container_name: hummingbot-sol
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - ./conf:/home/hummingbot/conf
+      - ./logs/sol:/home/hummingbot/logs
+      - ./data/sol:/home/hummingbot/data
+      - ./scripts:/home/hummingbot/scripts
+      - ./controllers:/home/hummingbot/controllers
+    environment:
+      - CONFIG_FILE_NAME=sol_usd_mm.yml
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
+    tty: true
+    stdin_open: true
+    network_mode: host
+    restart: unless-stopped
+
+  hummingbot-ada:
+    container_name: hummingbot-ada
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - ./conf:/home/hummingbot/conf
+      - ./logs/ada:/home/hummingbot/logs
+      - ./data/ada:/home/hummingbot/data
+      - ./scripts:/home/hummingbot/scripts
+      - ./controllers:/home/hummingbot/controllers
+    environment:
+      - CONFIG_FILE_NAME=ada_usd_mm.yml
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
+    tty: true
+    stdin_open: true
+    network_mode: host
+    restart: unless-stopped
+

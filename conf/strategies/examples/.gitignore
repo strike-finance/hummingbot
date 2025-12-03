@@ -1,0 +1,3 @@
+# Allow yml files in examples folder
+!*.yml
+
