@@ -96,3 +96,19 @@ coverage.xml
 .env
 
 **/.claude/settings.local.json
+
+# ============================================
+# Strike Market Maker - Credentials & Runtime
+# ============================================
+# Keep templates, ignore actual credentials
+conf/*/connectors/strike_perpetual.yml
+!conf/*/connectors/strike_perpetual.yml.template
+
+# Ignore logs and data (runtime files)
+logs/
+data/*.sqlite
+data/*/*.sqlite
+
+# Keep directory structure
+!logs/.gitkeep
+!data/.gitkeep

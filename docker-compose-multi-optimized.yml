@@ -1,18 +1,16 @@
-# ============================================================
-# Multi-Container Setup - Separate Credentials Per Pair
-# ============================================================
-# Each container has its own credentials but shares the SAME image.
+# Optimized Docker Compose for multiple Hummingbot bots
+# 
+# IMPORTANT: Build the image ONCE before running:
+#   docker build -t hummingbot:latest .
 #
 # Usage:
-#   docker-compose -f docker-compose-multi.yml build    # Build once
-#   docker-compose -f docker-compose-multi.yml up -d    # Start all
-#   docker-compose -f docker-compose-multi.yml up -d hummingbot-sol  # Start one
-# ============================================================
+#   docker-compose -f docker-compose-multi-optimized.yml up -d
+#   docker-compose -f docker-compose-multi-optimized.yml down
+#   docker attach hummingbot-btc
 
+# Common settings template (YAML anchor)
 x-hummingbot-common: &hummingbot-common
-  build:
-    context: .
-    dockerfile: Dockerfile
+  image: hummingbot:latest  # Use pre-built image instead of building each time
   logging:
     driver: "json-file"
     options:
@@ -28,7 +26,7 @@ services:
     <<: *hummingbot-common
     container_name: hummingbot-btc
     volumes:
-      - ./conf/btc:/home/hummingbot/conf
+      - ./conf:/home/hummingbot/conf
       - ./logs/btc:/home/hummingbot/logs
       - ./data/btc:/home/hummingbot/data
       - ./scripts:/home/hummingbot/scripts
@@ -40,7 +38,7 @@ services:
     <<: *hummingbot-common
     container_name: hummingbot-eth
     volumes:
-      - ./conf/eth:/home/hummingbot/conf
+      - ./conf:/home/hummingbot/conf
       - ./logs/eth:/home/hummingbot/logs
       - ./data/eth:/home/hummingbot/data
       - ./scripts:/home/hummingbot/scripts
@@ -52,7 +50,7 @@ services:
     <<: *hummingbot-common
     container_name: hummingbot-sol
     volumes:
-      - ./conf/sol:/home/hummingbot/conf
+      - ./conf:/home/hummingbot/conf
       - ./logs/sol:/home/hummingbot/logs
       - ./data/sol:/home/hummingbot/data
       - ./scripts:/home/hummingbot/scripts
@@ -64,10 +62,11 @@ services:
     <<: *hummingbot-common
     container_name: hummingbot-ada
     volumes:
-      - ./conf/ada:/home/hummingbot/conf
+      - ./conf:/home/hummingbot/conf
       - ./logs/ada:/home/hummingbot/logs
       - ./data/ada:/home/hummingbot/data
       - ./scripts:/home/hummingbot/scripts
       - ./controllers:/home/hummingbot/controllers
     environment:
       - CONFIG_FILE_NAME=ada_usd_mm.yml
+

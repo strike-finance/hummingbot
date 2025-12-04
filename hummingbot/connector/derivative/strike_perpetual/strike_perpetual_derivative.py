@@ -1,8 +1,10 @@
 import asyncio
+import os
 import time
 from decimal import Decimal
 from typing import Any, AsyncIterable, Dict, List, Optional, Tuple
 
+import yaml
 from bidict import bidict
 
 from hummingbot.connector.client_order_tracker import ClientOrderTracker
@@ -710,19 +712,57 @@ class StrikePerpetualDerivative(PerpetualDerivativePyBase):
         # Update balances based on WebSocket messages
         await self._update_balances()
 
+    def _load_trading_rules_config(self) -> dict:
+        """Load trading rules from config file."""
+        config_paths = [
+            os.path.join(os.path.dirname(__file__), "../../../../conf/strike/trading_rules.yml"),
+            "/home/hummingbot/conf/strike_trading_rules.yml",
+            "/home/hummingbot/conf/strike/trading_rules.yml",
+            "conf/strike/trading_rules.yml",
+        ]
+
+        for config_path in config_paths:
+            try:
+                if os.path.exists(config_path):
+                    with open(config_path, 'r') as f:
+                        return yaml.safe_load(f)
+            except Exception:
+                continue
+
+        # Return empty dict if no config found (will use defaults)
+        return {}
+
     async def _format_trading_rules(self, exchange_info_dict: Any) -> List[TradingRule]:
-        """Formats trading rules from exchange info."""
-        # Placeholder - Strike should provide market configuration
+        """Formats trading rules from exchange info or config file."""
         return_val: list = []
 
-        # Create default trading rules for configured pairs
+        # Load config from YAML file
+        config = self._load_trading_rules_config()
+        trading_rules_config = config.get("trading_rules", {})
+        default_config = config.get("default", {
+            "price_decimals": 4,
+            "amount_decimals": 6,
+            "min_order_size": 0.001
+        })
+
+        # Create trading rules for configured pairs
         for trading_pair in self._trading_pairs:
+            pair_config = trading_rules_config.get(trading_pair, default_config)
+
+            # Convert decimals to increment (e.g., 2 decimals -> 0.01)
+            price_decimals = pair_config.get("price_decimals", default_config["price_decimals"])
+            amount_decimals = pair_config.get("amount_decimals", default_config["amount_decimals"])
+            min_order_size = pair_config.get("min_order_size", default_config["min_order_size"])
+
+            price_increment = Decimal(10) ** -price_decimals
+            amount_increment = Decimal(10) ** -amount_decimals
+
             return_val.append(
                 TradingRule(
                     trading_pair,
-                    min_base_amount_increment=Decimal("0.000001"),
-                    min_price_increment=Decimal("0.0001"),
-                    min_order_size=Decimal("0.001"),
+                    min_base_amount_increment=amount_increment,
+                    min_price_increment=price_increment,
+                    min_order_size=Decimal(str(min_order_size)),
                     buy_order_collateral_token=CONSTANTS.CURRENCY,
                     sell_order_collateral_token=CONSTANTS.CURRENCY,
                 )

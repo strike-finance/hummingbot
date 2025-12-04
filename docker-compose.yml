@@ -1,10 +1,22 @@
+# ============================================================
+# Strike Perpetual Multi-Pair Market Maker
+# ============================================================
+# Single container running multiple trading pairs using V2 framework
+#
+# Quick Start:
+#   docker-compose up -d          # Start bot
+#   docker attach hummingbot      # Connect to bot
+#   Ctrl+P, Ctrl+Q                # Detach without stopping
+#
+# See SETUP_GUIDE.md for full documentation
+# ============================================================
+
 services:
   hummingbot:
     container_name: hummingbot
-    image: hummingbot/hummingbot:latest
-    # build: # Uncomment this build section and comment image to build Hummingbot locally
-    #   context: .
-    #   dockerfile: Dockerfile
+    build:
+      context: .
+      dockerfile: Dockerfile
     volumes:
       - ./conf:/home/hummingbot/conf
       - ./conf/connectors:/home/hummingbot/conf/connectors
@@ -16,6 +28,10 @@ services:
       - ./certs:/home/hummingbot/certs
       - ./scripts:/home/hummingbot/scripts
       - ./controllers:/home/hummingbot/controllers
+    environment:
+      # Auto-start the multi-pair market maker
+      - CONFIG_FILE_NAME=v2_with_controllers.py
+      - SCRIPT_CONFIG=strike_multi_mm.yml
     logging:
       driver: "json-file"
       options:
@@ -24,21 +40,19 @@ services:
     tty: true
     stdin_open: true
     network_mode: host
-  #  environment:
-  #    - CONFIG_PASSWORD=admin
-  #    - CONFIG_FILE_NAME=v2_with_controllers.py
-  #    - SCRIPT_CONFIG=conf_v2_with_controllers.yml
+    restart: unless-stopped
 
+  # Uncomment below to add Gateway for DEX support
   # gateway:
-  #  restart: always
-  #  container_name: gateway
-  #  image: hummingbot/gateway:latest
-  #  ports:
-  #    - "15888:15888"
-  #  volumes:
-  #    - "./gateway-files/conf:/home/gateway/conf"
-  #    - "./gateway-files/logs:/home/gateway/logs"
-  #    - "./certs:/home/gateway/certs"
-  #  environment:
-  #    - GATEWAY_PASSPHRASE=admin
-  #    - DEV=true
+  #   restart: always
+  #   container_name: gateway
+  #   image: hummingbot/gateway:latest
+  #   ports:
+  #     - "15888:15888"
+  #   volumes:
+  #     - "./gateway-files/conf:/home/gateway/conf"
+  #     - "./gateway-files/logs:/home/gateway/logs"
+  #     - "./certs:/home/gateway/certs"
+  #   environment:
+  #     - GATEWAY_PASSPHRASE=admin
+  #     - DEV=true
