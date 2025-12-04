@@ -1,0 +1,29 @@
+# Strike Perpetual Trading Rules Configuration
+# Adjust price and amount precision per trading pair
+
+trading_rules:
+  BTC-USD:
+    price_decimals: 1       # $100,000.1
+    amount_decimals: 6      # 0.000001 BTC
+    min_order_size: 0.001
+
+  ETH-USD:
+    price_decimals: 2       # $3,500.25
+    amount_decimals: 6      # 0.000001 ETH
+    min_order_size: 0.001
+
+  SOL-USD:
+    price_decimals: 2       # $225.50
+    amount_decimals: 6      # 0.000001 SOL
+    min_order_size: 0.001
+
+  ADA-USD:
+    price_decimals: 4       # $0.4512
+    amount_decimals: 6      # 0.000001 ADA
+    min_order_size: 0.001
+
+# Default for unlisted pairs
+default:
+  price_decimals: 4
+  amount_decimals: 6
+    min_order_size: 0.001

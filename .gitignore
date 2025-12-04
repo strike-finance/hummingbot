@@ -100,15 +100,12 @@ coverage.xml
 # ============================================
 # Strike Market Maker - Credentials & Runtime
 # ============================================
-# Keep templates, ignore actual credentials
+# Ignore encrypted credentials (created at runtime)
 conf/*/connectors/strike_perpetual.yml
-!conf/*/connectors/strike_perpetual.yml.template
 
-# Ignore logs and data (runtime files)
-logs/
-data/*.sqlite
-data/*/*.sqlite
+# Ignore logs and data (runtime files)  
+logs/**/*.log
+data/**/*.sqlite
 
-# Keep directory structure
-!logs/.gitkeep
-!data/.gitkeep
+# Keep directory structure with .gitkeep
+!**/.gitkeep

@@ -1,0 +1,7 @@
+markets: strike_perpetual.SOL-USD
+candles_config: []
+controllers_config:
+  - sol_pmm.yml
+max_global_drawdown_quote: 500
+max_controller_drawdown_quote: 300
+

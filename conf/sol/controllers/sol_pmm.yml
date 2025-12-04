@@ -1,0 +1,47 @@
+########################################################
+###       SOL-USD Perpetual Market Making (V2)       ###
+########################################################
+
+# Controller identification
+controller_type: generic
+controller_name: pmm
+id: sol_pmm
+
+# Connector and trading pair
+connector_name: strike_perpetual
+trading_pair: SOL-USD
+
+# Capital allocation
+total_amount_quote: 10000 # Total quote (USD) available for this pair
+portfolio_allocation: 0.05 # Use 5% of total per cycle (around mid price)
+
+# Position management targets
+target_base_pct: 0.2 # Target 20% base asset
+min_base_pct: 0.1 # Minimum 10% base asset
+max_base_pct: 0.4 # Maximum 40% base asset
+
+# Spread settings - 7 levels matching original config
+# Original: 0.15% base spread + 0.1% per level
+buy_spreads: "0.0015, 0.0025, 0.0035, 0.0045, 0.0055, 0.0065, 0.0075"
+sell_spreads: "0.0015, 0.0025, 0.0035, 0.0045, 0.0055, 0.0065, 0.0075"
+
+# Amount distribution (equal across levels, leave blank for equal)
+buy_amounts_pct:
+sell_amounts_pct:
+
+# Execution settings
+executor_refresh_time: 5 # Refresh orders every 5 seconds (original: order_refresh_time)
+cooldown_time: 3 # Delay after fill (original: filled_order_delay)
+
+# Leverage and position mode
+leverage: 10
+position_mode: ONEWAY
+
+# Risk management
+take_profit: 0.005 # 0.5% take profit (original: long/short_profit_taking_spread)
+take_profit_order_type: LIMIT
+global_take_profit: 0.005 # 0.5% global take profit
+global_stop_loss: 0.02 # 2% stop loss (original: stop_loss_spread)
+
+# Skew settings
+max_skew: 1.0

@@ -1,0 +1,76 @@
+########################################################
+###       SOL-USD Perpetual Market Making Config     ###
+########################################################
+
+template_version: 6
+strategy: perpetual_market_making
+
+# derivative and token parameters.
+derivative: strike_perpetual
+
+# Token trading pair for the exchange
+market: SOL-USD
+
+# What leverage to use
+leverage: 10
+
+# Position mode to use
+position_mode: One-way
+
+# Spread settings (% from mid price)
+bid_spread: 0.15
+ask_spread: 0.15
+
+# Minimum Spread - disabled
+minimum_spread: -100.0
+
+# Time in seconds before cancelling and placing new orders
+order_refresh_time: 5.0
+
+# The spread to defer order refresh to next cycle
+order_refresh_tolerance_pct: 0.05
+
+# Base order size (in SOL)
+order_amount: 5
+
+# Position management
+long_profit_taking_spread: 0.5
+short_profit_taking_spread: 0.5
+stop_loss_spread: 2.0
+time_between_stop_loss_orders: 60.0
+stop_loss_slippage_buffer: 0.5
+
+# Price band (disabled)
+price_ceiling: -1.0
+price_floor: -1.0
+
+# Multiple order levels (7 on each side = 14 total)
+order_levels: 7
+
+# Size increment per level (+2 SOL each level)
+order_level_amount: 2
+
+# Price spacing between levels
+order_level_spread: 0.1
+
+# Delay after order fill
+filled_order_delay: 3
+
+# Order optimization (disabled)
+order_optimization_enabled: false
+ask_order_optimization_depth: 0
+bid_order_optimization_depth: 0
+
+# Price source
+price_source: current_market
+price_type: mid_price
+
+# External pricing (not used)
+price_source_derivative:
+price_source_market:
+price_source_custom_api:
+custom_api_update_interval: 5.0
+
+# Order override (advanced)
+order_override:
+
