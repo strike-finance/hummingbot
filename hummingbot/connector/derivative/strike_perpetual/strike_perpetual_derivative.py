@@ -54,6 +54,7 @@ class StrikePerpetualDerivative(PerpetualDerivativePyBase):
         strike_perpetual_base_url: str = CONSTANTS.PERPETUAL_BASE_URL,
         strike_perpetual_ws_url: str = CONSTANTS.PERPETUAL_WS_URL,
         strike_perpetual_price_url: str = CONSTANTS.PERPETUAL_PRICE_URL,
+        strike_perpetual_price_source: str = CONSTANTS.PRICE_SOURCE_BINANCE,
         trading_pairs: Optional[List[str]] = None,
         trading_required: bool = True,
         domain: str = CONSTANTS.DOMAIN,
@@ -68,6 +69,7 @@ class StrikePerpetualDerivative(PerpetualDerivativePyBase):
         :param strike_perpetual_base_url: Base URL for Strike Trading API (default: http://localhost:8080)
         :param strike_perpetual_ws_url: WebSocket URL for Strike UserStream (default: ws://localhost:8083/ws)
         :param strike_perpetual_price_url: Base URL for Strike Price Service (default: http://localhost:8082)
+        :param strike_perpetual_price_source: Price source - 'binance' or 'strike' (default: binance)
         :param trading_pairs: List of trading pairs to track
         :param trading_required: Whether trading is required
         :param domain: The exchange domain
@@ -77,6 +79,7 @@ class StrikePerpetualDerivative(PerpetualDerivativePyBase):
         self.strike_perpetual_base_url = strike_perpetual_base_url
         self.strike_perpetual_ws_url = strike_perpetual_ws_url
         self.strike_perpetual_price_url = strike_perpetual_price_url
+        self.strike_perpetual_price_source = strike_perpetual_price_source
         self._trading_required = trading_required
         self._trading_pairs = trading_pairs
         self._domain = domain
@@ -345,6 +348,7 @@ class StrikePerpetualDerivative(PerpetualDerivativePyBase):
             connector=self,
             api_factory=self._web_assistants_factory,
             domain=self.domain,
+            price_source=self.strike_perpetual_price_source,
         )
 
     def _create_user_stream_data_source(self) -> UserStreamTrackerDataSource:

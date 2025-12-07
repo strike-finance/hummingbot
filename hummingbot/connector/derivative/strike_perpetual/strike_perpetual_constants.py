@@ -16,6 +16,14 @@ FUNDING_RATE_UPDATE_INTERNAL_SECOND = 60
 
 CURRENCY = "USDT"
 
+# Binance Perpetual API (for external price source)
+BINANCE_PERPETUAL_BASE_URL = "https://fapi.binance.com/fapi/"
+BINANCE_DEPTH_URL = "v1/depth"
+
+# Price source options
+PRICE_SOURCE_STRIKE = "strike"
+PRICE_SOURCE_BINANCE = "binance"
+
 # REST API Endpoints (Trading API - Port 8080)
 PING_URL = "/healthz"
 MARKETS_URL = "/v2/markets"
