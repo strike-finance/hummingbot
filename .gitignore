@@ -98,12 +98,12 @@ coverage.xml
 **/.claude/settings.local.json
 
 # ============================================
-# Strike Market Maker - Credentials & Runtime
+# Strike Market Maker - Runtime Files Only
 # ============================================
-# Ignore encrypted credentials (created at runtime)
-conf/*/connectors/strike_perpetual.yml
+# Configs are tracked for easy deployment across machines
+# NOTE: If using sensitive credentials, use environment variables instead
 
-# Ignore logs and data (runtime files)  
+# Ignore logs and data (runtime files)
 logs/**/*.log
 data/**/*.sqlite
 
