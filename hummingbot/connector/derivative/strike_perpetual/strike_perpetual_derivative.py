@@ -54,7 +54,6 @@ class StrikePerpetualDerivative(PerpetualDerivativePyBase):
         strike_perpetual_base_url: str = CONSTANTS.PERPETUAL_BASE_URL,
         strike_perpetual_ws_url: str = CONSTANTS.PERPETUAL_WS_URL,
         strike_perpetual_price_url: str = CONSTANTS.PERPETUAL_PRICE_URL,
-        strike_perpetual_price_source: str = CONSTANTS.PRICE_SOURCE_BINANCE,
         trading_pairs: Optional[List[str]] = None,
         trading_required: bool = True,
         domain: str = CONSTANTS.DOMAIN,
@@ -69,7 +68,6 @@ class StrikePerpetualDerivative(PerpetualDerivativePyBase):
         :param strike_perpetual_base_url: Base URL for Strike Trading API (default: http://localhost:8080)
         :param strike_perpetual_ws_url: WebSocket URL for Strike UserStream (default: ws://localhost:8083/ws)
         :param strike_perpetual_price_url: Base URL for Strike Price Service (default: http://localhost:8082)
-        :param strike_perpetual_price_source: Price source - 'binance' or 'strike' (default: binance)
         :param trading_pairs: List of trading pairs to track
         :param trading_required: Whether trading is required
         :param domain: The exchange domain
@@ -79,7 +77,6 @@ class StrikePerpetualDerivative(PerpetualDerivativePyBase):
         self.strike_perpetual_base_url = strike_perpetual_base_url
         self.strike_perpetual_ws_url = strike_perpetual_ws_url
         self.strike_perpetual_price_url = strike_perpetual_price_url
-        self.strike_perpetual_price_source = strike_perpetual_price_source
         self._trading_required = trading_required
         self._trading_pairs = trading_pairs
         self._domain = domain
@@ -187,102 +184,6 @@ class StrikePerpetualDerivative(PerpetualDerivativePyBase):
         trading_rule: TradingRule = self._trading_rules[trading_pair]
         return trading_rule.sell_order_collateral_token
 
-    def get_price(self, trading_pair: str, is_buy: bool) -> Decimal:
-        """
-        Override get_price to handle USD/USDT equivalence.
-        Strike uses USDT as collateral but trading pairs use USD as quote.
-        """
-        # Handle USD-USDT conversion
-        # For now, treat as 1:1 but this could be enhanced to fetch real USDT/USD rate
-        # from an external source (e.g., Binance, CoinGecko) for more accuracy
-        if trading_pair in ["USD-USDT", "USDT-USD"]:
-            # TODO: For pmm_dynamic, consider fetching real-time USDT/USD rate
-            # from a reference exchange like Binance or using an oracle
-            return self._get_usdt_usd_reference_price()
-
-        # Convert USDT-based pairs to USD-based pairs (e.g., ADA-USDT -> ADA-USD)
-        # since Strike trading pairs use USD but collateral is USDT
-        if "-USDT" in trading_pair:
-            converted_pair = trading_pair.replace("-USDT", "-USD")
-            # Check if the USD version exists
-            if converted_pair in self.order_book_tracker.order_books:
-                return super().get_price(converted_pair, is_buy)
-
-        # Similarly handle USDT-XXX -> USD-XXX
-        if "USDT-" in trading_pair:
-            converted_pair = trading_pair.replace("USDT-", "USD-")
-            if converted_pair in self.order_book_tracker.order_books:
-                # For inverse pairs, we need to invert the price
-                price = super().get_price(converted_pair, not is_buy)
-                return Decimal("1") / price if price > 0 else Decimal("0")
-
-        # For all other pairs, use the parent implementation
-        return super().get_price(trading_pair, is_buy)
-
-    def _get_usdt_usd_reference_price(self) -> Decimal:
-        """
-        Get the USDT/USD reference price for accurate collateral calculations.
-
-        Fetches real-time USDT/USD rate from Binance with caching to avoid
-        excessive API calls. This is especially important for PMM strategies
-        where precise collateral valuations affect order sizing.
-
-        :return: USDT/USD conversion rate
-        """
-        import time
-
-        # Cache the reference price for 60 seconds
-        cache_duration = 60  # seconds
-        current_time = time.time()
-
-        # Check cache
-        if hasattr(self, '_usdt_usd_cache'):
-            cached_price, cached_time = self._usdt_usd_cache
-            if current_time - cached_time < cache_duration:
-                return cached_price
-
-        # Try to fetch from Binance
-        try:
-            import asyncio
-
-            import aiohttp
-
-            async def fetch_binance_price():
-                try:
-                    async with aiohttp.ClientSession() as session:
-                        # Binance doesn't have direct USDT/USD, use USDT/USDC as proxy
-                        # USDC is typically pegged 1:1 to USD
-                        url = "https://api.binance.com/api/v3/ticker/price?symbol=USDCUSDT"
-                        async with session.get(url, timeout=aiohttp.ClientTimeout(total=2)) as response:
-                            if response.status == 200:
-                                data = await response.json()
-                                price = Decimal(data['price'])
-                                # Invert since we got USDC/USDT but want USDT/USD
-                                # If USDC = 0.9995 USDT, then USDT = 1/0.9995 = 1.0005 USD
-                                return Decimal("1") / price if price > 0 else Decimal("1.0")
-                except Exception:
-                    pass
-                return Decimal("1.0")
-
-            # Run async fetch
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                # If already in async context, return default
-                reference_price = Decimal("1.0")
-            else:
-                reference_price = loop.run_until_complete(fetch_binance_price())
-
-            # Cache the result
-            self._usdt_usd_cache = (reference_price, current_time)
-            return reference_price
-
-        except Exception as e:
-            self.logger().debug(f"Failed to fetch USDT/USD reference price: {e}")
-            # Fallback to 1:1 assumption
-            fallback = Decimal("1.0")
-            self._usdt_usd_cache = (fallback, current_time)
-            return fallback
-
     def _is_request_exception_related_to_time_synchronizer(self, request_exception: Exception):
         """Checks if exception is related to time synchronization."""
         return False
@@ -348,7 +249,6 @@ class StrikePerpetualDerivative(PerpetualDerivativePyBase):
             connector=self,
             api_factory=self._web_assistants_factory,
             domain=self.domain,
-            price_source=self.strike_perpetual_price_source,
         )
 
     def _create_user_stream_data_source(self) -> UserStreamTrackerDataSource:

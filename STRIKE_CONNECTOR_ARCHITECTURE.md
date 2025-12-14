@@ -10,6 +10,7 @@
 │  │  - Calculates bid/ask spreads                                │  │
 │  │  - Determines order sizes                                     │  │
 │  │  - Monitors PnL and positions                                │  │
+│  │  - Handles USDT→USD conversion (from Binance prices)         │  │
 │  └─────────────────────┬────────────────────────────────────────┘  │
 │                        │ calls market.buy()/sell()                  │
 │                        ▼                                             │
@@ -18,7 +19,7 @@
 │  │  - Extends PerpetualDerivativePyBase                         │  │
 │  │  - Manages order lifecycle                                    │  │
 │  │  - Tracks positions and balances                             │  │
-│  │  - Handles USD/USDT conversion                               │  │
+│  │  - Passes prices through (no conversion)                     │  │
 │  └──────┬─────────────┬─────────────┬─────────────┬──────────┘  │
 │         │             │             │             │              │
 └─────────┼─────────────┼─────────────┼─────────────┼──────────────┘
@@ -72,10 +73,10 @@ strike_perpetual/
 │  • Order Management: _place_order(), _place_cancel()      │
 │  • Balance Tracking: _update_balances()                   │
 │  • Position Tracking: _update_positions()                 │
-│  • Price Conversion: get_price() - USD/USDT handling     │
 │  • Order State: _process_order_message()                  │
 │  • Trading Rules: _update_trading_rules()                 │
 │  • Funding Rates: _update_funding_rate()                  │
+│  • NO price conversion - passes through unchanged         │
 └────────────────────────────────────────────────────────────┘
 
 ┌────────────────────────────────────────────────────────────┐
@@ -244,58 +245,62 @@ Strike Status Code    →    Hummingbot OrderState
 
 ## 5. USD/USDT Conversion Architecture
 
-This is a **critical design decision** due to Strike's architecture:
+This is a **critical design decision** due to the mismatch between Binance and Strike:
 
 ```
 ┌────────────────────────────────────────────────────────────────┐
-│                    USD vs USDT MISMATCH                        │
+│              BINANCE (USDT) → STRIKE (USD) CONVERSION          │
 └────────────────────────────────────────────────────────────────┘
 
-Strike V2 Architecture:
-  • Trading Pairs: ADA-USD, BTC-USD (quote currency: USD)
-  • Collateral: USDT (actual balance currency)
-  • They treat 1 USD = 1 USDT internally
+Price Source Architecture:
+  • Binance: Quotes in USDT (BTC-USDT, ADA-USDT)
+  • Strike: Quotes in USD (BTC-USD, ADA-USD)
+  • Need conversion: USDT → USD
 
-Hummingbot PMM Strategy:
-  • Checks collateral with: market.get_price("USD-USDT")
-  • Calculates budget: balance_in_usdt * usd_price
+Flow:
+  [1] Binance returns price in USDT
+              ↓ (e.g., ADA-USDT = 0.45 USDT)
+  [2] Connector passes through (no conversion)
+              ↓
+  [3] Strategy's get_price() applies conversion
+              ↓ Fetch USDT/USD = 1.0005 from Strike
+              ↓ Convert: 0.45 × 1.0005 = 0.450225 USD
+  [4] Strike receives USD price
+              ↓ (e.g., places order at 0.450225 on ADA-USD)
 
-Without Fix:
-  ✗ get_price("USD-USDT") → Order book not found
-  ✗ get_price("ADA-USDT") → Order book not found
-  ✗ Clock tick fails → Strategy stops
-
-With Fix (strike_perpetual_derivative.py:220):
-  ✓ get_price("USD-USDT") → Fetches real USDT/USD rate from Binance
-  ✓ get_price("ADA-USDT") → Converts to ADA-USD automatically
-  ✓ Stores balances under BOTH "USD" and "USDT" keys
+Why Strategy-Level Conversion:
+  ✓ Connector stays simple - just passes prices through
+  ✓ Conversion uses Strike's own /v2/stablecoin/rates endpoint
+  ✓ Real-time accurate rate instead of 1:1 assumption
+  ✓ Cached for 60s to avoid excessive API calls
 ```
 
 ### USD/USDT Conversion Code:
 
+**Location:** `perpetual_market_making.py:267` (Strategy level, NOT connector)
+
 ```python
-def get_price(self, trading_pair: str, is_buy: bool) -> Decimal:
-    # Handle USD-USDT conversion
-    if trading_pair in ["USD-USDT", "USDT-USD"]:
-        return self._get_usdt_usd_reference_price()
-
-    # Convert USDT-based pairs to USD-based pairs
-    if "-USDT" in trading_pair:
-        converted_pair = trading_pair.replace("-USDT", "-USD")
-        if converted_pair in self.order_book_tracker.order_books:
-            return super().get_price(converted_pair, is_buy)
-
-    return super().get_price(trading_pair, is_buy)
-
-def _get_usdt_usd_reference_price(self) -> Decimal:
+# In perpetual_market_making strategy:
+def _get_usdt_usd_rate(self) -> Decimal:
     """
-    Fetch USDT/USD rate from Binance (uses USDC/USDT as proxy)
+    Fetch USDT/USD rate from Strike's /v2/stablecoin/rates endpoint
     Cached for 60 seconds to avoid excessive API calls
     Fallback to 1.0 if fetch fails
     """
-    # Implementation fetches from:
-    # https://api.binance.com/api/v3/ticker/price?symbol=USDCUSDT
-    # Then inverts: 1 / USDC_USDT = USDT_USD
+    # Fetches from Strike backend:
+    # http://localhost:8082/v2/stablecoin/rates
+    # Returns: {"USDT-USD": "1.0005", "USDC-USD": "0.9998", ...}
+
+def get_price(self) -> float:
+    # ... get base price from market ...
+
+    # Apply USDT→USD conversion when using Binance prices
+    if self.quote_asset == "USD":
+        usdt_usd_rate = self._get_usdt_usd_rate()
+        # Binance price (USDT) × rate = Strike price (USD)
+        price = price * usdt_usd_rate
+
+    return price
 ```
 
 ### Balance Storage Fix:
@@ -534,16 +539,22 @@ Located in `strike_perpetual_utils.py:23`
 
 ## 9. Key Design Decisions
 
-### ✅ Connector-Level USD/USDT Conversion
+### ✅ Strategy-Level USD/USDT Conversion
 
-**Location:** `strike_perpetual_derivative.py:220`
+**Location:** `perpetual_market_making.py:267`
 
-**Why:** PMM strategy calls `market.get_price()` - conversion must happen in connector, not strategy.
+**Why:** Binance prices (USDT) need conversion to Strike prices (USD).
 
-**Alternative considered:** Modifying PMM strategy to handle USD/USDT conversion
-- ❌ Would require forking core Hummingbot code
-- ❌ Wouldn't work with other strategies
-- ✓ Connector-level fix is transparent to all strategies
+**Implementation:**
+- ✓ Connector passes prices through unchanged (simple, clean)
+- ✓ Strategy applies conversion using Strike's `/v2/stablecoin/rates`
+- ✓ Real-time accurate rate instead of 1:1 assumption
+- ✓ Cached for 60s to avoid excessive API calls
+
+**Alternative considered:** Connector-level conversion
+- ❌ Connector becomes complex with conversion logic
+- ❌ Harder to maintain and debug
+- ✓ Strategy-level keeps connector simple and focused
 
 ### ✅ Synthetic Order Book
 
@@ -558,12 +569,12 @@ Located in `strike_perpetual_utils.py:23`
 
 ### ✅ 60-Second USDT/USD Cache
 
-**Location:** `strike_perpetual_derivative.py:240`
+**Location:** `perpetual_market_making.py:267`
 
 **Why:** Balance between accuracy and API rate limits. USDT/USD is stable (~1.0).
 
 **Alternatives:**
-- No cache: ❌ Excessive API calls to Binance
+- No cache: ❌ Excessive API calls to Strike backend
 - 5-minute cache: ❌ Too stale for accurate calculations
 - ✓ 60 seconds: Good balance for stable pair
 
@@ -596,9 +607,10 @@ Located in `strike_perpetual_utils.py:23`
 └────────────────────────────────────────────────────────────────┘
 
 [T=0s] PMM Strategy decides to place order
+        ├─> Fetches USDT/USD rate from Strike: 1.0005
+        ├─> Converts Binance price: 0.45 USDT × 1.0005 = 0.450225 USD
         ├─> Checks spread: 5%
-        ├─> Checks balance via get_price("USD-USDT") → 1.0001
-        └─> Calls market.buy("ADA-USD", 100, LIMIT, 0.45)
+        └─> Calls market.buy("ADA-USD", 100, LIMIT, 0.450225)
 
 [T=0.1s] StrikePerpetualDerivative._place_order()
         ├─> Creates InFlightOrder with client_order_id
@@ -674,6 +686,15 @@ Located in `strike_perpetual_utils.py:23`
 | `/v2/ticker/price` | GET | Current prices | No |
 | `/v2/ticker/bookTicker` | GET | Best bid/ask | No |
 | `/v2/premiumIndex` | GET | Funding rates | No |
+| `/v2/stablecoin/rates` | GET | USDT/USD conversion rates | No |
+
+**Example `/v2/stablecoin/rates` response:**
+```json
+{
+  "USDT-USD": "1.0005",
+  "USDC-USD": "0.9998"
+}
+```
 
 ### WebSocket (Port 8083)
 
@@ -690,11 +711,11 @@ Located in `strike_perpetual_utils.py:23`
 ### Common Errors:
 
 ```
-Error: "No order book exists for 'USD-USDT'"
-Fix: Implemented in get_price() - fetches from Binance
+Error: "Prices seem off when using Binance as source"
+Fix: Strategy automatically converts USDT→USD using Strike's rates
 
-Error: "No order book exists for 'ADA-USDT'"
-Fix: Implemented in get_price() - converts to ADA-USD
+Error: "USDT/USD conversion rate is 1.0 (should be ~1.0005)"
+Fix: Ensure Strike price service is running on port 8082
 
 Error: "Balance shows 0 in USD"
 Fix: Store balances under both USD and USDT keys
@@ -704,6 +725,9 @@ Fix: Initialize order book with init_orderbook.sh script
 
 Error: "API key authentication failed"
 Fix: Ensure API key is in database and services are restarted
+
+Error: "Cannot fetch /v2/stablecoin/rates"
+Fix: Verify Strike price service is running (docker-compose logs price)
 ```
 
 ### Debugging:
@@ -731,7 +755,8 @@ docker-compose logs -f api | grep -i websocket
 - [ ] WebSocket receives order events
 - [ ] WebSocket receives position events
 - [ ] WebSocket receives balance events
-- [ ] USD/USDT conversion works
+- [ ] USDT→USD conversion works (strategy fetches from `/v2/stablecoin/rates`)
+- [ ] Binance USDT prices converted to USD correctly
 - [ ] Balance shows correctly in `status` command
 - [ ] Synthetic order book has bid/ask prices
 - [ ] Orders fill correctly
@@ -744,13 +769,17 @@ The Strike Perpetual connector is a **full-featured perpetual futures connector*
 
 1. **Extends** Hummingbot's `PerpetualDerivativePyBase` class
 2. **Authenticates** via API keys with X-API-Key headers
-3. **Handles** USD/USDT currency mismatch transparently
-4. **Creates** synthetic order books from mark prices
-5. **Tracks** orders, positions, and balances in real-time via WebSocket
-6. **Supports** market making strategies with proper collateral calculations
-7. **Integrates** seamlessly with existing PMM strategies
+3. **Passes prices through** unchanged (connector stays simple)
+4. **Strategy handles conversion** - USDT→USD using Strike's `/v2/stablecoin/rates`
+5. **Creates** synthetic order books from mark prices
+6. **Tracks** orders, positions, and balances in real-time via WebSocket
+7. **Supports** market making with Binance prices converted to USD
+8. **Integrates** seamlessly with existing PMM strategies
 
-The connector's architecture prioritizes **reliability**, **transparency**, and **maintainability** while working around Strike V2 API limitations (no depth endpoint, USD/USDT mismatch).
+The connector's architecture prioritizes **simplicity**, **reliability**, and **maintainability** by:
+- Keeping conversion logic in the strategy (not connector)
+- Using Strike's own stablecoin rates endpoint
+- Clean separation of concerns between connector and strategy
 
 ## Related Documentation
 

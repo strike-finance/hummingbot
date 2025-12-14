@@ -69,15 +69,6 @@ class StrikePerpetualConfigMap(BaseConnectorConfigMap):
             "prompt_on_new": False,
         }
     )
-    strike_perpetual_price_source: str = Field(
-        default="binance",
-        json_schema_extra={
-            "prompt": "Enter price source - 'binance' for Binance Perpetual or 'strike' for Strike internal (default: binance)",
-            "is_secure": False,
-            "is_connect_key": False,
-            "prompt_on_new": False,
-        }
-    )
 
     model_config = ConfigDict(title="strike_perpetual")
 

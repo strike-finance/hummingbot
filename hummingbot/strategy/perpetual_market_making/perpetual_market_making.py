@@ -264,6 +264,79 @@ class PerpetualMarketMakingStrategy(StrategyPyBase):
     def trading_pair(self):
         return self._market_info.trading_pair
 
+    def _get_usdt_usd_rate(self) -> Decimal:
+        """
+        Get USDT/USD conversion rate from Strike backend's /v2/stablecoin/rates endpoint.
+        Uses caching to avoid excessive API calls.
+
+        :return: USDT/USD conversion rate (e.g., 1.0005 means 1 USDT = 1.0005 USD)
+        """
+        import time
+
+        # Cache for 60 seconds
+        cache_duration = 60
+        current_time = time.time()
+
+        # Check cache
+        if hasattr(self, '_usdt_usd_rate_cache'):
+            cached_rate, cached_time = self._usdt_usd_rate_cache
+            if current_time - cached_time < cache_duration:
+                return cached_rate
+
+        # Try to fetch from Strike backend
+        try:
+            import asyncio
+
+            import aiohttp
+
+            async def fetch_stablecoin_rate():
+                # Get the price URL from the connector
+                market = self._market_info.market
+                if hasattr(market, 'strike_perpetual_price_url'):
+                    price_url = market.strike_perpetual_price_url
+                else:
+                    # Fallback to default
+                    price_url = "http://localhost:8082"
+
+                url = f"{price_url}/v2/stablecoin/rates"
+
+                try:
+                    async with aiohttp.ClientSession() as session:
+                        async with session.get(url, timeout=aiohttp.ClientTimeout(total=2)) as response:
+                            if response.status == 200:
+                                data = await response.json()
+                                # Response format: {"USDT-USD": "1.0005", "USDC-USD": "0.9998", ...}
+                                usdt_usd_str = data.get("USDT-USD") or data.get("usdt-usd")
+                                if usdt_usd_str:
+                                    return Decimal(str(usdt_usd_str))
+                except Exception as e:
+                    self.logger().debug(f"Failed to fetch from Strike stablecoin rates: {e}")
+
+                return Decimal("1.0")  # Fallback to 1:1
+
+            # Run async fetch
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    # If already in async context, return cached or default
+                    rate = Decimal("1.0")
+                else:
+                    rate = loop.run_until_complete(fetch_stablecoin_rate())
+            except RuntimeError:
+                # No event loop, return default
+                rate = Decimal("1.0")
+
+            # Cache the result
+            self._usdt_usd_rate_cache = (rate, current_time)
+            return rate
+
+        except Exception as e:
+            self.logger().debug(f"Error fetching USDT/USD rate: {e}")
+            # Fallback to 1:1
+            fallback = Decimal("1.0")
+            self._usdt_usd_rate_cache = (fallback, current_time)
+            return fallback
+
     def get_price(self) -> float:
         if self._asset_price_delegate is not None:
             price_provider = self._asset_price_delegate
@@ -275,6 +348,22 @@ class PerpetualMarketMakingStrategy(StrategyPyBase):
             price = price_provider.get_price_by_type(self._price_type)
         if price.is_nan():
             price = price_provider.get_price_by_type(PriceType.MidPrice)
+
+        # Convert USDT to USD when using Binance as price source
+        # Binance uses USDT-quoted pairs (BTC-USDT, ADA-USDT)
+        # Strike uses USD-quoted pairs (BTC-USD, ADA-USD)
+        # Get real-time USDT/USD rate from Strike's /v2/stablecoin/rates
+        if self.quote_asset == "USD":
+            try:
+                usdt_usd_rate = self._get_usdt_usd_rate()
+                # Price might be in USDT (from Binance), convert to USD
+                # If USDT/USD = 1.0005, then 1.00 USDT = 1.0005 USD
+                if usdt_usd_rate > 0:
+                    price = price * usdt_usd_rate
+            except Exception as e:
+                self.logger().debug(f"Failed to apply USDT/USD conversion: {e}")
+                # Continue with original price if conversion fails
+
         return price
 
     def get_last_price(self) -> float:
