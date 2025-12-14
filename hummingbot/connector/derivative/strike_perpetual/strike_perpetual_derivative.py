@@ -235,7 +235,7 @@ class StrikePerpetualDerivative(PerpetualDerivativePyBase):
             # Placeholder - Strike should provide a symbols endpoint
             mapping = bidict()
             for trading_pair in self._trading_pairs:
-                # Strike uses symbols with hyphens (e.g., ADA-USDT)
+                # Strike uses symbols with hyphens (e.g., ADA-USD)
                 exchange_symbol = trading_pair  # Keep the hyphen
                 mapping[exchange_symbol] = trading_pair
             self._set_trading_pair_symbol_map(mapping)
@@ -700,10 +700,10 @@ class StrikePerpetualDerivative(PerpetualDerivativePyBase):
             # Re-raise so base class can handle it with standard error logging
             raise
 
-        # Strike uses USDT as collateral, but trading pairs use USD as quote
+        # Strike uses USD as both collateral and quote currency for trading pairs
         # Store balances under "USD" to match trading pair quote currency
         # This ensures PMM strategy can find the balance correctly
-        quote = "USD"  # Changed from CONSTANTS.CURRENCY ("USDT") to match trading pairs
+        quote = "USD"  # Matches CONSTANTS.CURRENCY
 
         # Update balances from Strike API response
         # The /v2/account endpoint now includes balance data
@@ -713,10 +713,6 @@ class StrikePerpetualDerivative(PerpetualDerivativePyBase):
         # Store under "USD" key to match trading pair quote currency
         self._account_balances[quote] = wallet_balance
         self._account_available_balances[quote] = available_balance
-
-        # Also store under "USDT" for compatibility (actual collateral currency)
-        self._account_balances[CONSTANTS.CURRENCY] = wallet_balance
-        self._account_available_balances[CONSTANTS.CURRENCY] = available_balance
 
     async def _update_positions(self):
         """Updates account positions."""
@@ -828,7 +824,7 @@ class StrikePerpetualDerivative(PerpetualDerivativePyBase):
         # This will be enhanced when Strike provides a markets/exchange info endpoint
         if self._trading_pairs:
             for trading_pair in self._trading_pairs:
-                # Strike uses symbols with hyphens (e.g., ADA-USDT)
+                # Strike uses symbols with hyphens (e.g., ADA-USD)
                 exchange_symbol = trading_pair  # Keep the hyphen
                 mapping[exchange_symbol] = trading_pair
         self._set_trading_pair_symbol_map(mapping)

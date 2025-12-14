@@ -14,7 +14,7 @@ PERPETUAL_WS_URL = "ws://localhost:8083/ws"
 
 FUNDING_RATE_UPDATE_INTERNAL_SECOND = 60
 
-CURRENCY = "USDT"
+CURRENCY = "USD"
 
 # Binance Perpetual API (for external price source)
 BINANCE_PERPETUAL_BASE_URL = "https://fapi.binance.com/fapi/"
