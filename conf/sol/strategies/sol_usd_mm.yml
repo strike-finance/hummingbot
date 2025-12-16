@@ -18,9 +18,9 @@ position_mode: One-way
 # ============================================
 # SPREAD SETTINGS
 # ============================================
-bid_spread: 0.08
-ask_spread: 0.08
-minimum_spread: -100.0
+bid_spread: 0.04
+ask_spread: 0.04
+minimum_spread: 0.02
 
 # ============================================
 # ORDER SETTINGS (sized for $10M capital)
@@ -38,8 +38,8 @@ order_levels: 20
 # Both sides: ~$17.6M notional (with 3x leverage = ~$5.9M margin)
 order_level_amount: 200
 
-# 0.04% spread between levels
-order_level_spread: 0.04
+# 0.1% spread between levels (wider distribution)
+order_level_spread: 0.1
 
 # ============================================
 # QUICK REFRESH SETTINGS
@@ -51,6 +51,8 @@ filled_order_delay: 2
 # ============================================
 # POSITION MANAGEMENT
 # ============================================
+# Continue placing opening orders while holding a position
+continuous_quoting: true
 long_profit_taking_spread: 0.3
 short_profit_taking_spread: 0.3
 stop_loss_spread: 1.5
@@ -58,12 +60,12 @@ time_between_stop_loss_orders: 30.0
 stop_loss_slippage_buffer: 0.3
 
 # ============================================
-# PRICE SOURCE
+# PRICE SOURCE - Anchored to Binance Perpetual
 # ============================================
-price_source: current_market
+price_source: external_market
 price_type: mid_price
-price_source_derivative:
-price_source_market:
+price_source_derivative: binance_perpetual
+price_source_market: SOL-USDT
 price_source_custom_api:
 custom_api_update_interval: 5.0
 

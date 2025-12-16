@@ -308,3 +308,9 @@ gate_io_perpetual_taker_percent_fee:
 gate_io_perpetual_buy_percent_fee_deducted_from_returns:
 gate_io_perpetual_maker_fixed_fees:
 gate_io_perpetual_taker_fixed_fees:
+bitget_percent_fee_token:
+bitget_maker_percent_fee:
+bitget_taker_percent_fee:
+bitget_buy_percent_fee_deducted_from_returns:
+bitget_maker_fixed_fees:
+bitget_taker_fixed_fees:

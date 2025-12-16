@@ -79,6 +79,7 @@ class PerpetualMarketMakingStrategy(StrategyPyBase):
                     minimum_spread: Decimal = Decimal(0),
                     hb_app_notification: bool = False,
                     order_override: Dict[str, List[str]] = {},
+                    continuous_quoting: bool = False,
                     ):
 
         if price_ceiling != s_decimal_neg_one and price_ceiling < price_floor:
@@ -131,6 +132,7 @@ class PerpetualMarketMakingStrategy(StrategyPyBase):
         self._close_order_type = OrderType.LIMIT
         self._time_between_stop_loss_orders = time_between_stop_loss_orders
         self._stop_loss_slippage_buffer = stop_loss_slippage_buffer
+        self._continuous_quoting = continuous_quoting
 
         self._position_mode_ready = False
         self._position_mode_not_ready_counter = 0
@@ -571,8 +573,10 @@ class PerpetualMarketMakingStrategy(StrategyPyBase):
                     self.logger().warning("WARNING: Some markets are not connected or are down at the moment. Market "
                                           "making may be dangerous when markets or networks are unstable.")
 
-            if len(session_positions) == 0:
-                self._exit_orders = dict()  # Empty list of exit order at this point to reduce size
+            # Create opening orders if no position OR if continuous_quoting is enabled
+            if len(session_positions) == 0 or self._continuous_quoting:
+                if len(session_positions) == 0:
+                    self._exit_orders = dict()  # Empty list of exit order at this point to reduce size
                 proposal = None
                 if self._create_timestamp <= self.current_timestamp:
                     # 1. Create base order proposals
@@ -598,7 +602,9 @@ class PerpetualMarketMakingStrategy(StrategyPyBase):
                 # Reset peak ask and bid prices
                 self._ts_peak_ask_price = market.get_price(self.trading_pair, False)
                 self._ts_peak_bid_price = market.get_price(self.trading_pair, True)
-            else:
+
+            # Manage positions (profit taking / stop loss) if holding a position
+            if len(session_positions) > 0:
                 self.manage_positions(session_positions)
         finally:
             self._last_timestamp = timestamp

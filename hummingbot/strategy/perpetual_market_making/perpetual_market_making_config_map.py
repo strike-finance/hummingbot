@@ -321,4 +321,11 @@ perpetual_market_making_config_map = {
                   required_if=lambda: False,
                   default=None,
                   type_str="json"),
+    "continuous_quoting":
+        ConfigVar(key="continuous_quoting",
+                  prompt="Do you want to continue placing orders while holding a position? (Yes/No) >>> ",
+                  type_str="bool",
+                  required_if=lambda: False,
+                  default=False,
+                  validator=validate_bool),
 }
