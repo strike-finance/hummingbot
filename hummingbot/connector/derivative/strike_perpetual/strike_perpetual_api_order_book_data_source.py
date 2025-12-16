@@ -4,6 +4,8 @@ from collections import defaultdict
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional
 
+import aiohttp
+
 import hummingbot.connector.derivative.strike_perpetual.strike_perpetual_constants as CONSTANTS
 import hummingbot.connector.derivative.strike_perpetual.strike_perpetual_web_utils as web_utils
 from hummingbot.core.data_type.common import TradeType
@@ -40,6 +42,68 @@ class StrikePerpetualAPIOrderBookDataSource(PerpetualAPIOrderBookDataSource):
         self._trading_pairs: List[str] = trading_pairs
         self._message_queue: Dict[str, asyncio.Queue] = defaultdict(asyncio.Queue)
         self._snapshot_messages_queue_key = "order_book_snapshot"
+        self._usdt_usd_rate_cache: Optional[tuple] = None
+
+    def _convert_to_binance_symbol(self, strike_trading_pair: str) -> str:
+        """
+        Converts Strike trading pair to Binance perpetual symbol.
+        Strike: ADA-USD, BTC-USD -> Binance: ADAUSDT, BTCUSDT
+
+        :param strike_trading_pair: Strike format trading pair (e.g., "ADA-USD")
+        :return: Binance perpetual symbol (e.g., "ADAUSDT")
+        """
+        # Strike pairs use USD as quote, Binance perpetual uses USDT
+        if "-USD" in strike_trading_pair:
+            base = strike_trading_pair.replace("-USD", "")
+            return f"{base}USDT"
+        elif "USD-" in strike_trading_pair:
+            # Handle inverse pairs (USD-XXX -> XXXUSDT)
+            quote = strike_trading_pair.replace("USD-", "")
+            return f"{quote}USDT"
+        else:
+            # If it doesn't match expected pattern, return as-is
+            return strike_trading_pair.replace("-", "")
+
+    async def _get_usdt_usd_rate(self) -> Decimal:
+        """
+        Get USDT/USD conversion rate from Strike backend's /v2/stablecoin/rates endpoint.
+        Uses caching to avoid excessive API calls.
+
+        :return: USDT/USD conversion rate (e.g., 1.0005 means 1 USDT = 1.0005 USD)
+        """
+        # Cache for 60 seconds
+        cache_duration = 60
+        current_time = time.time()
+
+        # Check cache
+        if self._usdt_usd_rate_cache is not None:
+            cached_rate, cached_time = self._usdt_usd_rate_cache
+            if current_time - cached_time < cache_duration:
+                return cached_rate
+
+        # Fetch from Strike backend
+        try:
+            price_url = self._connector.strike_perpetual_price_url
+            url = f"{price_url}/v2/stablecoin/rates"
+
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, timeout=aiohttp.ClientTimeout(total=2)) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        # Response format: {"USDT-USD": "1.0005", "USDC-USD": "0.9998", ...}
+                        usdt_usd_str = data.get("USDT-USD") or data.get("usdt-usd")
+                        if usdt_usd_str:
+                            rate = Decimal(str(usdt_usd_str))
+                            # Cache the result
+                            self._usdt_usd_rate_cache = (rate, current_time)
+                            return rate
+        except Exception as e:
+            self.logger().debug(f"Failed to fetch USDT/USD rate from Strike: {e}")
+
+        # Fallback to 1:1
+        fallback = Decimal("1.0")
+        self._usdt_usd_rate_cache = (fallback, current_time)
+        return fallback
 
     async def get_last_traded_prices(
         self,
@@ -99,103 +163,166 @@ class StrikePerpetualAPIOrderBookDataSource(PerpetualAPIOrderBookDataSource):
                 self.logger().exception("Unexpected error when processing public funding info updates from exchange")
                 await self._sleep(CONSTANTS.FUNDING_RATE_UPDATE_INTERNAL_SECOND)
 
+    async def _request_order_book_snapshot_from_binance(self, trading_pair: str) -> Dict[str, Any]:
+        """
+        Requests order book snapshot from Binance Perpetual API.
+        Converts USDT prices to USD using real-time exchange rate.
+
+        :param trading_pair: The Strike trading pair (e.g., "ADA-USD")
+        :return: Order book snapshot data in Strike format with USD prices
+        """
+        # Convert Strike pair to Binance symbol
+        binance_symbol = self._convert_to_binance_symbol(trading_pair)
+
+        params = {
+            "symbol": binance_symbol,
+            "limit": 100
+        }
+
+        try:
+            # Fetch orderbook from Binance
+            async with aiohttp.ClientSession() as session:
+                binance_depth_url = f"{CONSTANTS.BINANCE_PERPETUAL_BASE_URL}{CONSTANTS.BINANCE_DEPTH_URL}"
+                async with session.get(binance_depth_url, params=params, timeout=aiohttp.ClientTimeout(total=5)) as response:
+                    if response.status != 200:
+                        self.logger().warning(f"Failed to fetch Binance orderbook for {trading_pair}: HTTP {response.status}")
+                        return None
+
+                    data = await response.json()
+
+            # Get USDT/USD conversion rate
+            usdt_usd_rate = await self._get_usdt_usd_rate()
+
+            # Convert Binance USDT prices to USD prices
+            converted_bids = []
+            for price, size in data.get("bids", []):
+                usd_price = str(Decimal(price) * usdt_usd_rate)
+                converted_bids.append([usd_price, size])
+
+            converted_asks = []
+            for price, size in data.get("asks", []):
+                usd_price = str(Decimal(price) * usdt_usd_rate)
+                converted_asks.append([usd_price, size])
+
+            # Convert Binance response to Strike format
+            ex_trading_pair = await self._connector.exchange_symbol_associated_to_pair(trading_pair=trading_pair)
+            return {
+                "symbol": ex_trading_pair,
+                "bids": converted_bids,
+                "asks": converted_asks,
+                "timestamp": data.get("T", int(time.time() * 1000))  # Binance uses 'T' for timestamp
+            }
+        except Exception as e:
+            self.logger().warning(f"Failed to fetch orderbook from Binance for {trading_pair}: {e}")
+            return None
+
     async def _request_order_book_snapshot(self, trading_pair: str) -> Dict[str, Any]:
         """
-        Requests order book snapshot from Strike API.
+        Requests order book snapshot from Binance Perpetual (primary source).
+        Falls back to synthetic orderbook if Binance is unavailable.
 
         :param trading_pair: The trading pair
         :return: Order book snapshot data
         """
         ex_trading_pair = await self._connector.exchange_symbol_associated_to_pair(trading_pair=trading_pair)
 
-        # Request orderbook from Strike v2 /v2/depth endpoint
-        params = {
-            "symbol": ex_trading_pair,
-            "limit": 100
-        }
+        # Fetch orderbook from Binance (primary source)
+        self.logger().debug(f"Fetching orderbook from Binance for {trading_pair}")
+        data = await self._request_order_book_snapshot_from_binance(trading_pair)
 
-        rest_assistant = await self._api_factory.get_rest_assistant()
-        depth_url = web_utils.public_rest_url(CONSTANTS.DEPTH_URL, domain=self._domain)
+        # If Binance fetch failed, try Strike as fallback
+        if not data or (not data.get("bids") and not data.get("asks")):
+            self.logger().debug(f"Binance orderbook empty/failed, trying Strike for {trading_pair}")
 
-        try:
-            data = await rest_assistant.execute_request(
-                url=depth_url,
-                params=params,
-                method=RESTMethod.GET,
-                throttler_limit_id=CONSTANTS.DEPTH_URL,
-            )
+            # Request orderbook from Strike v2 /v2/depth endpoint
+            params = {
+                "symbol": ex_trading_pair,
+                "limit": 100
+            }
 
-            # If orderbook is empty or failed, create synthetic orderbook from index price
-            if not data or (not data.get("bids") and not data.get("asks")):
-                # Get index price from markets endpoint
-                try:
-                    rest_assistant = await self._api_factory.get_rest_assistant()
-                    markets_url = web_utils.public_rest_url(CONSTANTS.MARKETS_URL, domain=self._domain)
-                    markets_data = await rest_assistant.execute_request(
-                        url=markets_url,
-                        method=RESTMethod.GET,
-                        throttler_limit_id=CONSTANTS.MARKETS_URL,
+            rest_assistant = await self._api_factory.get_rest_assistant()
+            depth_url = web_utils.public_rest_url(CONSTANTS.DEPTH_URL, domain=self._domain)
+
+            try:
+                data = await rest_assistant.execute_request(
+                    url=depth_url,
+                    params=params,
+                    method=RESTMethod.GET,
+                    throttler_limit_id=CONSTANTS.DEPTH_URL,
+                )
+            except Exception as e:
+                self.logger().warning(f"Failed to fetch orderbook from Strike for {trading_pair}: {e}")
+                data = None
+
+        # If both Binance and Strike failed, create synthetic orderbook from index price
+        if not data or (not data.get("bids") and not data.get("asks")):
+            self.logger().warning(f"Both Binance and Strike orderbooks unavailable for {trading_pair}, creating synthetic orderbook")
+            # Get index price from markets endpoint
+            try:
+                rest_assistant = await self._api_factory.get_rest_assistant()
+                markets_url = web_utils.public_rest_url(CONSTANTS.MARKETS_URL, domain=self._domain)
+                markets_data = await rest_assistant.execute_request(
+                    url=markets_url,
+                    method=RESTMethod.GET,
+                    throttler_limit_id=CONSTANTS.MARKETS_URL,
+                )
+
+                market_data = markets_data.get("markets", {}).get(ex_trading_pair, {})
+                index_price = float(market_data.get("index_price", 0))
+
+                # If no index price, use mark_price or last_price
+                if index_price == 0:
+                    index_price = float(market_data.get("mark_price", 0))
+                if index_price == 0:
+                    index_price = float(market_data.get("last_price", 0))
+
+                # If all prices are still 0, raise an error
+                if index_price == 0:
+                    raise ValueError(
+                        f"No valid price data available for {trading_pair}. "
+                        f"Cannot create orderbook without price information."
                     )
 
-                    market_data = markets_data.get("markets", {}).get(ex_trading_pair, {})
-                    index_price = float(market_data.get("index_price", 0))
+                # Create synthetic orderbook with 0.2% spread around index price
+                spread_pct = 0.002  # 0.2%
+                bid_price = index_price * (1 - spread_pct)
+                ask_price = index_price * (1 + spread_pct)
 
-                    # If no index price, use mark_price or last_price
-                    if index_price == 0:
-                        index_price = float(market_data.get("mark_price", 0))
-                    if index_price == 0:
-                        index_price = float(market_data.get("last_price", 0))
+                # Create a ladder of orders with increasing size
+                bids = []
+                asks = []
+                for i in range(5):
+                    level_spread = i * 0.001  # 0.1% between levels
+                    size = str(100 * (i + 1))  # Increasing size
 
-                    # If all prices are still 0, raise an error
-                    if index_price == 0:
-                        raise ValueError(
-                            f"No valid price data available for {trading_pair} from Strike API. "
-                            f"Cannot create orderbook without price information."
-                        )
+                    bid_level_price = bid_price * (1 - level_spread)
+                    ask_level_price = ask_price * (1 + level_spread)
 
-                    # Create synthetic orderbook with 0.2% spread around index price
-                    spread_pct = 0.002  # 0.2%
-                    bid_price = index_price * (1 - spread_pct)
-                    ask_price = index_price * (1 + spread_pct)
+                    bids.append([str(round(bid_level_price, 4)), size])
+                    asks.append([str(round(ask_level_price, 4)), size])
 
-                    # Create a ladder of orders with increasing size
-                    bids = []
-                    asks = []
-                    for i in range(5):
-                        level_spread = i * 0.001  # 0.1% between levels
-                        size = str(100 * (i + 1))  # Increasing size
+                data = {
+                    "symbol": ex_trading_pair,
+                    "bids": bids,
+                    "asks": asks,
+                    "timestamp": int(time.time() * 1000)
+                }
 
-                        bid_level_price = bid_price * (1 - level_spread)
-                        ask_level_price = ask_price * (1 + level_spread)
+                self.logger().info(
+                    f"Created synthetic orderbook for {trading_pair} at {index_price} "
+                    f"(bid: {bids[0][0]}, ask: {asks[0][0]})"
+                )
 
-                        bids.append([str(round(bid_level_price, 4)), size])
-                        asks.append([str(round(ask_level_price, 4)), size])
+            except Exception as e:
+                self.logger().warning(f"Failed to create synthetic orderbook: {e}")
+                data = {
+                    "symbol": ex_trading_pair,
+                    "bids": [],
+                    "asks": [],
+                    "timestamp": int(time.time() * 1000)
+                }
 
-                    data = {
-                        "symbol": ex_trading_pair,
-                        "bids": bids,
-                        "asks": asks,
-                        "timestamp": int(time.time() * 1000)
-                    }
-
-                    self.logger().info(
-                        f"Created synthetic orderbook for {trading_pair} at {index_price} "
-                        f"(bid: {bids[0][0]}, ask: {asks[0][0]})"
-                    )
-
-                except Exception as e:
-                    self.logger().warning(f"Failed to create synthetic orderbook: {e}")
-                    data = {
-                        "symbol": ex_trading_pair,
-                        "bids": [],
-                        "asks": [],
-                        "timestamp": int(time.time() * 1000)
-                    }
-
-            return data
-        except Exception as e:
-            self.logger().warning(f"Failed to fetch orderbook from Strike for {trading_pair}: {e}")
-            return None
+        return data
 
     async def _order_book_snapshot(self, trading_pair: str) -> OrderBookMessage:
         """
