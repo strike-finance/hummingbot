@@ -80,6 +80,7 @@ class PerpetualMarketMakingStrategy(StrategyPyBase):
                     hb_app_notification: bool = False,
                     order_override: Dict[str, List[str]] = {},
                     continuous_quoting: bool = False,
+                    min_orders_per_side: int = 7,
                     ):
 
         if price_ceiling != s_decimal_neg_one and price_ceiling < price_floor:
@@ -133,6 +134,7 @@ class PerpetualMarketMakingStrategy(StrategyPyBase):
         self._time_between_stop_loss_orders = time_between_stop_loss_orders
         self._stop_loss_slippage_buffer = stop_loss_slippage_buffer
         self._continuous_quoting = continuous_quoting
+        self._min_orders_per_side = min_orders_per_side
 
         self._position_mode_ready = False
         self._position_mode_not_ready_counter = 0
@@ -607,10 +609,12 @@ class PerpetualMarketMakingStrategy(StrategyPyBase):
                 proposed_buy_prices = [b.price for b in proposal.buys]
                 proposed_sell_prices = [s.price for s in proposal.sells]
 
-                # Helper: check if price is "close enough" to any in list (within 0.1%)
+                # Helper: check if price is "close enough" to any in list (within 0.5%)
                 def has_order_near(price, price_list):
+                    if not price_list:
+                        return False
                     for p in price_list:
-                        if abs(price - p) / price <= Decimal("0.001"):
+                        if abs(price - p) / price <= Decimal("0.005"):  # 0.5% tolerance
                             return True
                     return False
 
@@ -623,14 +627,33 @@ class PerpetualMarketMakingStrategy(StrategyPyBase):
                     self.execute_orders_proposal(Proposal(new_buys, new_sells), PositionAction.OPEN)
 
                 # 2. CANCEL OLD ORDERS that aren't near any proposed price
+                # PROTECTION: Don't cancel buy orders if proposal has no buys (something is wrong)
+                # PROTECTION: Don't cancel sell orders if proposal has no sells
+                # PROTECTION: Always keep at least min_orders_per_side orders on each side
+
+                active_buys = [o for o in mm_orders if o.is_buy]
+                active_sells = [o for o in mm_orders if not o.is_buy]
+                buys_cancelled = 0
+                sells_cancelled = 0
+
                 for order in mm_orders:
                     order_price = Decimal(str(order.price))
                     if order.is_buy:
-                        if not has_order_near(order_price, proposed_buy_prices):
-                            self.cancel_order(self._market_info, order.client_order_id)
+                        # Only cancel if we have proposed buys AND this order isn't near any of them
+                        # AND we'll still have at least MIN_ORDERS_PER_SIDE buys left
+                        if proposed_buy_prices and not has_order_near(order_price, proposed_buy_prices):
+                            if len(active_buys) - buys_cancelled > self._min_orders_per_side:
+                                self.logger().info(f"Cancelling stale buy at {order_price}")
+                                self.cancel_order(self._market_info, order.client_order_id)
+                                buys_cancelled += 1
                     else:
-                        if not has_order_near(order_price, proposed_sell_prices):
-                            self.cancel_order(self._market_info, order.client_order_id)
+                        # Only cancel if we have proposed sells AND this order isn't near any of them
+                        # AND we'll still have at least MIN_ORDERS_PER_SIDE sells left
+                        if proposed_sell_prices and not has_order_near(order_price, proposed_sell_prices):
+                            if len(active_sells) - sells_cancelled > self._min_orders_per_side:
+                                self.logger().info(f"Cancelling stale sell at {order_price}")
+                                self.cancel_order(self._market_info, order.client_order_id)
+                                sells_cancelled += 1
 
                 self.set_timers()
 

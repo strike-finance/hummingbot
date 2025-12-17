@@ -44,6 +44,8 @@ order_level_spread: 0.08
 order_refresh_time: 20.0
 order_refresh_tolerance_pct: 0.5
 filled_order_delay: 1
+# Always keep at least this many orders on each side
+min_orders_per_side: 7
 
 # ============================================
 # POSITION MANAGEMENT
