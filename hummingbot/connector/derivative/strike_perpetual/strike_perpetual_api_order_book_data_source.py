@@ -227,8 +227,13 @@ class StrikePerpetualAPIOrderBookDataSource(PerpetualAPIOrderBookDataSource):
         ex_trading_pair = await self._connector.exchange_symbol_associated_to_pair(trading_pair=trading_pair)
 
         # Fetch orderbook from Binance (primary source)
-        self.logger().debug(f"Fetching orderbook from Binance for {trading_pair}")
+        self.logger().info(f"Fetching orderbook from Binance for {trading_pair}")
         data = await self._request_order_book_snapshot_from_binance(trading_pair)
+
+        if data and data.get("bids") and data.get("asks"):
+            best_bid = data["bids"][0][0] if data["bids"] else "N/A"
+            best_ask = data["asks"][0][0] if data["asks"] else "N/A"
+            self.logger().info(f"Binance orderbook for {trading_pair}: best_bid={best_bid}, best_ask={best_ask}")
 
         # If Binance fetch failed, try Strike as fallback
         if not data or (not data.get("bids") and not data.get("asks")):

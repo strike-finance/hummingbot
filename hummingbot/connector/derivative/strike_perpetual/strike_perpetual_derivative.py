@@ -445,7 +445,7 @@ class StrikePerpetualDerivative(PerpetualDerivativePyBase):
             "side": CONSTANTS.ORDER_SIDE_BUY if trade_type == TradeType.BUY else CONSTANTS.ORDER_SIDE_SELL,
             "type": strike_order_type,
             "size": str(amount),
-            "reduce_only": position_action == PositionAction.CLOSE,
+            "post_only": True,
         }
 
         if order_type == OrderType.LIMIT:
@@ -760,7 +760,7 @@ class StrikePerpetualDerivative(PerpetualDerivativePyBase):
                 position_side=position_side,
                 unrealized_pnl=unrealized_pnl,
                 entry_price=entry_price,
-                amount=abs(size),
+                amount=size,  # Keep sign: positive for LONG, negative for SHORT
                 leverage=leverage
             )
             self._perpetual_trading.set_position(pos_key, _position)

@@ -23,36 +23,36 @@ ask_spread: 0.04
 minimum_spread: 0.02
 
 # ============================================
-# ORDER SETTINGS (sized for $10M capital)
+# ORDER SETTINGS (tiny near mid, large far out)
 # ============================================
-# Small base order near mid: 10,000 ADA (~$11k)
-order_amount: 10000
+# Tiny base order near mid: 50 ADA (~$55)
+order_amount: 50
 
-# 20 levels on each side (40 orders total)
-order_levels: 20
+# 15 levels on each side (30 orders total)
+order_levels: 15
 
-# +40,000 ADA per level (steep curve - small near mid, large far out)
-# Level sizes: 10k, 50k, 90k, 130k, 170k, 210k, 250k, 290k, 330k, 370k,
-#              410k, 450k, 490k, 530k, 570k, 610k, 650k, 690k, 730k, 770k
-# Total per side: ~7,800,000 ADA (~$8.6M)
-# Both sides: ~$17.2M notional (with 3x leverage = ~$5.7M margin)
-order_level_amount: 40000
+# +150 ADA per level
+# Level 1: 50, Level 5: 650, Level 10: 1400, Level 20: 2900
+order_level_amount: 150
 
-# 0.1% spread between levels (wider distribution)
+# 0.1% spread between levels
 order_level_spread: 0.1
 
 # ============================================
-# QUICK REFRESH SETTINGS
+# STABLE REFRESH SETTINGS (less churn)
 # ============================================
-order_refresh_time: 3.0
-order_refresh_tolerance_pct: 0.01
-filled_order_delay: 2
+# Refresh every 20 seconds
+order_refresh_time: 20.0
+# Only cancel if price moved more than 0.5%
+order_refresh_tolerance_pct: 0.5
+# Minimal delay after fill - replace orders quickly
+filled_order_delay: 1
 
 # ============================================
 # POSITION MANAGEMENT
 # ============================================
 # Continue placing opening orders while holding a position
-continuous_quoting: true
+continuous_quoting: True
 long_profit_taking_spread: 0.3
 short_profit_taking_spread: 0.3
 stop_loss_spread: 1.5
@@ -60,12 +60,12 @@ time_between_stop_loss_orders: 30.0
 stop_loss_slippage_buffer: 0.3
 
 # ============================================
-# PRICE SOURCE - Anchored to Binance Perpetual
+# PRICE SOURCE - Strike Orderbook (Binance snapshot)
 # ============================================
-price_source: external_market
+price_source: current_market
 price_type: mid_price
-price_source_derivative: binance_perpetual
-price_source_market: ADA-USDT
+price_source_derivative:
+price_source_market:
 price_source_custom_api:
 custom_api_update_interval: 5.0
 
@@ -74,7 +74,7 @@ custom_api_update_interval: 5.0
 # ============================================
 price_ceiling: -1.0
 price_floor: -1.0
-order_optimization_enabled: false
+order_optimization_enabled: False
 ask_order_optimization_depth: 0
 bid_order_optimization_depth: 0
 order_override:

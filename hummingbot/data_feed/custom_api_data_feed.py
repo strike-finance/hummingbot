@@ -1,12 +1,15 @@
 import asyncio
-import aiohttp
+import json
 import logging
+from decimal import Decimal
 from typing import Optional
+
+import aiohttp
+
 from hummingbot.core.network_base import NetworkBase
 from hummingbot.core.network_iterator import NetworkStatus
-from hummingbot.logger import HummingbotLogger
 from hummingbot.core.utils.async_utils import safe_ensure_future
-from decimal import Decimal
+from hummingbot.logger import HummingbotLogger
 
 
 class CustomAPIDataFeed(NetworkBase):
@@ -72,7 +75,32 @@ class CustomAPIDataFeed(NetworkBase):
             resp_text = await resp.text()
             if resp.status != 200:
                 raise Exception(f"Custom API Feed {self.name} server error: {resp_text}")
-            self._price = Decimal(str(resp_text))
+            try:
+                data = json.loads(resp_text)
+                if isinstance(data, dict):
+                    # Check for orderbook format (Binance depth endpoint)
+                    # Format: {"bids": [["price", "qty"], ...], "asks": [["price", "qty"], ...]}
+                    if "bids" in data and "asks" in data:
+                        bids = data.get("bids", [])
+                        asks = data.get("asks", [])
+                        if bids and asks:
+                            best_bid = Decimal(str(bids[0][0]))
+                            best_ask = Decimal(str(asks[0][0]))
+                            self._price = (best_bid + best_ask) / Decimal("2")
+                    # Check for ticker price format (e.g., {"price": "104000.00"})
+                    elif "price" in data:
+                        self._price = Decimal(str(data["price"]))
+                    # Check for other common price field names
+                    else:
+                        price_value = data.get("mid_price") or data.get("last_price") or data.get("mark_price")
+                        if price_value is not None:
+                            self._price = Decimal(str(price_value))
+                else:
+                    # If JSON but not a dict (e.g., just a number), use directly
+                    self._price = Decimal(str(data))
+            except json.JSONDecodeError:
+                # Not JSON, treat as plain number
+                self._price = Decimal(str(resp_text))
         self._ready_event.set()
 
     async def start_network(self):

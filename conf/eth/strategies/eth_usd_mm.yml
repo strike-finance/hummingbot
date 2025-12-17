@@ -23,36 +23,33 @@ ask_spread: 0.04
 minimum_spread: 0.02
 
 # ============================================
-# ORDER SETTINGS (sized for $10M capital)
+# ORDER SETTINGS (tiny near mid, large far out)
 # ============================================
-# Small base order near mid: 3 ETH (~$10.5k)
-order_amount: 3
+# Tiny base order near mid: 0.1 ETH (~$350)
+order_amount: 0.1
 
-# 20 levels on each side (40 orders total)
-order_levels: 20
+# 15 levels on each side (30 orders total)
+order_levels: 15
 
-# +12 ETH per level (steep curve - small near mid, large far out)
-# Level sizes: 3, 15, 27, 39, 51, 63, 75, 87, 99, 111,
-#              123, 135, 147, 159, 171, 183, 195, 207, 219, 231
-# Total per side: ~2340 ETH (~$8.2M)
-# Both sides: ~$16.4M notional (with 3x leverage = ~$5.5M margin)
-order_level_amount: 12
+# +1.5 ETH per level
+# Level 1: 0.1, Level 5: 6.1, Level 10: 13.6, Level 20: 28.6
+order_level_amount: 1.5
 
-# 0.1% spread between levels (wider distribution)
-order_level_spread: 0.1
+# 0.08% spread between levels
+order_level_spread: 0.08
 
 # ============================================
-# QUICK REFRESH SETTINGS
+# STABLE REFRESH SETTINGS (less churn)
 # ============================================
-order_refresh_time: 3.0
-order_refresh_tolerance_pct: 0.01
-filled_order_delay: 2
+order_refresh_time: 20.0
+order_refresh_tolerance_pct: 0.5
+filled_order_delay: 1
 
 # ============================================
 # POSITION MANAGEMENT
 # ============================================
 # Continue placing opening orders while holding a position
-continuous_quoting: true
+continuous_quoting: True
 long_profit_taking_spread: 0.3
 short_profit_taking_spread: 0.3
 stop_loss_spread: 1.5
@@ -60,12 +57,12 @@ time_between_stop_loss_orders: 30.0
 stop_loss_slippage_buffer: 0.3
 
 # ============================================
-# PRICE SOURCE - Anchored to Binance Perpetual
+# PRICE SOURCE - Strike Orderbook (Binance snapshot)
 # ============================================
-price_source: external_market
+price_source: current_market
 price_type: mid_price
-price_source_derivative: binance_perpetual
-price_source_market: ETH-USDT
+price_source_derivative:
+price_source_market:
 price_source_custom_api:
 custom_api_update_interval: 5.0
 
@@ -74,7 +71,7 @@ custom_api_update_interval: 5.0
 # ============================================
 price_ceiling: -1.0
 price_floor: -1.0
-order_optimization_enabled: false
+order_optimization_enabled: False
 ask_order_optimization_depth: 0
 bid_order_optimization_depth: 0
 order_override:

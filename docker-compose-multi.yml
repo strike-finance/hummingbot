@@ -28,7 +28,8 @@ services:
     <<: *hummingbot-common
     container_name: hummingbot-btc
     volumes:
-      - ./conf/btc:/home/hummingbot/conf
+      - ./conf/btc/strategies:/home/hummingbot/conf/strategies
+      - ./conf/btc/connectors:/home/hummingbot/conf/connectors
       - ./logs/btc:/home/hummingbot/logs
       - ./data/btc:/home/hummingbot/data
       - ./scripts:/home/hummingbot/scripts
@@ -40,7 +41,8 @@ services:
     <<: *hummingbot-common
     container_name: hummingbot-eth
     volumes:
-      - ./conf/eth:/home/hummingbot/conf
+      - ./conf/eth/strategies:/home/hummingbot/conf/strategies
+      - ./conf/eth/connectors:/home/hummingbot/conf/connectors
       - ./logs/eth:/home/hummingbot/logs
       - ./data/eth:/home/hummingbot/data
       - ./scripts:/home/hummingbot/scripts
@@ -52,7 +54,8 @@ services:
     <<: *hummingbot-common
     container_name: hummingbot-sol
     volumes:
-      - ./conf/sol:/home/hummingbot/conf
+      - ./conf/sol/strategies:/home/hummingbot/conf/strategies
+      - ./conf/sol/connectors:/home/hummingbot/conf/connectors
       - ./logs/sol:/home/hummingbot/logs
       - ./data/sol:/home/hummingbot/data
       - ./scripts:/home/hummingbot/scripts
@@ -64,7 +67,8 @@ services:
     <<: *hummingbot-common
     container_name: hummingbot-ada
     volumes:
-      - ./conf/ada:/home/hummingbot/conf
+      - ./conf/ada/strategies:/home/hummingbot/conf/strategies
+      - ./conf/ada/connectors:/home/hummingbot/conf/connectors
       - ./logs/ada:/home/hummingbot/logs
       - ./data/ada:/home/hummingbot/data
       - ./scripts:/home/hummingbot/scripts
