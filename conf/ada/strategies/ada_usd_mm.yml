@@ -28,8 +28,8 @@ minimum_spread: 0.02
 # Tiny base order near mid: 50 ADA (~$55)
 order_amount: 50
 
-# 15 levels on each side (30 orders total)
-order_levels: 15
+# 25 levels on each side (50 orders total)
+order_levels: 25
 
 # +150 ADA per level
 # Level 1: 50, Level 5: 650, Level 10: 1400, Level 20: 2900

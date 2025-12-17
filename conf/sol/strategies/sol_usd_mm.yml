@@ -28,8 +28,8 @@ minimum_spread: 0.02
 # Tiny base order near mid: 1 SOL (~$225)
 order_amount: 1
 
-# 15 levels on each side (30 orders total)
-order_levels: 15
+# 25 levels on each side (50 orders total)
+order_levels: 25
 
 # +20 SOL per level
 # Level 1: 1, Level 5: 81, Level 10: 181, Level 20: 381

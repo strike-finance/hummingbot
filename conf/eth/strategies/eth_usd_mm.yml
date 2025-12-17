@@ -28,8 +28,8 @@ minimum_spread: 0.02
 # Tiny base order near mid: 0.1 ETH (~$350)
 order_amount: 0.1
 
-# 15 levels on each side (30 orders total)
-order_levels: 15
+# 25 levels on each side (50 orders total)
+order_levels: 25
 
 # +1.5 ETH per level
 # Level 1: 0.1, Level 5: 6.1, Level 10: 13.6, Level 20: 28.6
