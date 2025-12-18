@@ -844,10 +844,20 @@ class PerpetualMarketMakingStrategy(StrategyPyBase):
         self.apply_price_band(proposal)
 
     def apply_price_band(self, proposal: Proposal):
+        # FIX: Don't completely clear sides - this can leave the book empty
+        # Instead, log a warning but keep the orders so we maintain liquidity
         if self._price_ceiling > 0 and self.get_price() >= self._price_ceiling:
-            proposal.buys = []
+            self.logger().warning(
+                f"Price {self.get_price()} >= ceiling {self._price_ceiling}. "
+                f"Keeping {len(proposal.buys)} buy orders to maintain liquidity."
+            )
+            # Don't clear buys - keep them to maintain two-sided book
         if self._price_floor > 0 and self.get_price() <= self._price_floor:
-            proposal.sells = []
+            self.logger().warning(
+                f"Price {self.get_price()} <= floor {self._price_floor}. "
+                f"Keeping {len(proposal.sells)} sell orders to maintain liquidity."
+            )
+            # Don't clear sells - keep them to maintain two-sided book
 
     def apply_order_price_modifiers(self, proposal: Proposal):
         if self._order_optimization_enabled:
@@ -857,7 +867,10 @@ class PerpetualMarketMakingStrategy(StrategyPyBase):
         checker = self._market_info.market.budget_checker
 
         order_candidates = self.create_order_candidates_for_budget_check(proposal)
-        adjusted_candidates = checker.adjust_candidates(order_candidates, all_or_none=True)
+        # FIX: Changed all_or_none=False to allow partial orders
+        # With all_or_none=True, if budget is insufficient for all orders,
+        # the entire side could be cleared, leaving the book empty
+        adjusted_candidates = checker.adjust_candidates(order_candidates, all_or_none=False)
         self.apply_adjusted_order_candidates_to_proposal(adjusted_candidates, proposal)
 
     def create_order_candidates_for_budget_check(self, proposal: Proposal):
@@ -907,6 +920,32 @@ class PerpetualMarketMakingStrategy(StrategyPyBase):
                 self.logger().warning(
                     "You are also at a possible risk of being liquidated if there happens to be an open loss.")
                 order.size = s_decimal_zero
+
+        # FIX: Preserve minimum orders per side even after budget constraints
+        # Keep at least min_orders_per_side on each side
+        valid_buys = [o for o in proposal.buys if o.size > 0]
+        valid_sells = [o for o in proposal.sells if o.size > 0]
+
+        if len(valid_buys) < self._min_orders_per_side and len(proposal.buys) > 0:
+            # Keep the orders with smallest sizes (most likely to pass budget)
+            sorted_buys = sorted(proposal.buys, key=lambda x: x.size)
+            keep_count = min(self._min_orders_per_side, len(proposal.buys))
+            for i, buy in enumerate(sorted_buys[:keep_count]):
+                if buy.size == s_decimal_zero:
+                    # Restore with minimum viable size
+                    buy.size = self._order_amount
+            valid_buys = [o for o in proposal.buys if o.size > 0]
+            self.logger().warning(f"Budget constraint: Preserving {len(valid_buys)} buy orders")
+
+        if len(valid_sells) < self._min_orders_per_side and len(proposal.sells) > 0:
+            sorted_sells = sorted(proposal.sells, key=lambda x: x.size)
+            keep_count = min(self._min_orders_per_side, len(proposal.sells))
+            for i, sell in enumerate(sorted_sells[:keep_count]):
+                if sell.size == s_decimal_zero:
+                    sell.size = self._order_amount
+            valid_sells = [o for o in proposal.sells if o.size > 0]
+            self.logger().warning(f"Budget constraint: Preserving {len(valid_sells)} sell orders")
+
         proposal.buys = [o for o in proposal.buys if o.size > 0]
         proposal.sells = [o for o in proposal.sells if o.size > 0]
 
@@ -918,10 +957,31 @@ class PerpetualMarketMakingStrategy(StrategyPyBase):
         self.logger().info(f"filter_out_takers: top_bid={top_bid}, top_ask={top_ask}")
         self.logger().info(f"filter_out_takers: buys before={len(proposal.buys)}, sells before={len(proposal.sells)}")
 
+        # FIX: Preserve minimum orders per side even if they would cross spread
+        # Sort by distance from crossing price to keep the safest orders
         if not top_ask.is_nan():
-            proposal.buys = [buy for buy in proposal.buys if buy.price < top_ask]
+            valid_buys = [buy for buy in proposal.buys if buy.price < top_ask]
+            if len(valid_buys) < self._min_orders_per_side and len(proposal.buys) > 0:
+                # Keep the lowest-priced buys (furthest from crossing)
+                sorted_buys = sorted(proposal.buys, key=lambda x: x.price)
+                proposal.buys = sorted_buys[:max(self._min_orders_per_side, len(valid_buys))]
+                self.logger().warning(
+                    f"filter_out_takers: Keeping {len(proposal.buys)} buy orders to maintain min_orders_per_side"
+                )
+            else:
+                proposal.buys = valid_buys
+
         if not top_bid.is_nan():
-            proposal.sells = [sell for sell in proposal.sells if sell.price > top_bid]
+            valid_sells = [sell for sell in proposal.sells if sell.price > top_bid]
+            if len(valid_sells) < self._min_orders_per_side and len(proposal.sells) > 0:
+                # Keep the highest-priced sells (furthest from crossing)
+                sorted_sells = sorted(proposal.sells, key=lambda x: x.price, reverse=True)
+                proposal.sells = sorted_sells[:max(self._min_orders_per_side, len(valid_sells))]
+                self.logger().warning(
+                    f"filter_out_takers: Keeping {len(proposal.sells)} sell orders to maintain min_orders_per_side"
+                )
+            else:
+                proposal.sells = valid_sells
 
         self.logger().info(f"filter_out_takers: buys after={len(proposal.buys)}, sells after={len(proposal.sells)}")
 
