@@ -19,7 +19,6 @@ from hummingbot.core.event.events import (
     PositionModeChangeEvent,
     SellOrderCompletedEvent,
 )
-from hummingbot.core.network_iterator import NetworkStatus
 from hummingbot.core.utils import map_df_to_str
 from hummingbot.strategy.asset_price_delegate import AssetPriceDelegate
 from hummingbot.strategy.market_trading_pair_tuple import MarketTradingPairTuple
@@ -542,9 +541,13 @@ class PerpetualMarketMakingStrategy(StrategyPyBase):
         self._market_info.market.set_leverage(self.trading_pair, self._leverage)
 
     def tick(self, timestamp: float):
+        """
+        SIMPLE MM: Ignore positions, just place limit orders around mid price.
+        Place new orders FIRST, then cancel stale orders.
+        """
+        # Wait for position mode to be ready
         if not self._position_mode_ready:
             self._position_mode_not_ready_counter += 1
-            # Attempt to switch position mode every 10 ticks only to not spam and DDOS
             if self._position_mode_not_ready_counter == 10:
                 market: DerivativeBase = self._market_info.market
                 if market.ready:
@@ -553,86 +556,77 @@ class PerpetualMarketMakingStrategy(StrategyPyBase):
                 self._position_mode_not_ready_counter = 0
             return
         self._position_mode_not_ready_counter = 0
+
         market: DerivativeBase = self._market_info.market
-        # session_positions = [s for s in self.active_positions.values() if s.trading_pair == self.trading_pair]
-        current_tick = timestamp // self._status_report_interval
-        last_tick = self._last_timestamp // self._status_report_interval
-        should_report_warnings = ((current_tick > last_tick) and
-                                  (self._logging_options & self.OPTION_LOG_STATUS_REPORT))
+
         try:
+            # Wait for markets to be ready
             if not self._all_markets_ready:
-                self._all_markets_ready = all([market.ready for market in self.active_markets])
+                self._all_markets_ready = all([mkt.ready for mkt in self.active_markets])
                 if self._asset_price_delegate is not None and self._all_markets_ready:
                     self._all_markets_ready = self._asset_price_delegate.ready
                 if not self._all_markets_ready:
-                    # M({self.trading_pair}) Maker sell order {order_id}arkets not ready yet. Don't do anything.
-                    if should_report_warnings:
-                        self.logger().warning("Markets are not ready. No market making trades are permitted.")
+                    self.logger().warning("Markets are not ready.")
                     return
 
-            if should_report_warnings:
-                if not all([market.network_status is NetworkStatus.CONNECTED for market in self.active_markets]):
-                    self.logger().warning("WARNING: Some markets are not connected or are down at the moment. Market "
-                                          "making may be dangerous when markets or networks are unstable.")
+            # Get mid price
+            mid_price = Decimal(str(self.get_price()))
+            if mid_price <= 0:
+                self.logger().warning("Invalid mid price, skipping tick")
+                return
 
-            # TESTNET MODE: Always create proposals on every tick to keep book filled
-            # Ignore _create_timestamp delay - always try to fill gaps
+            self.logger().info(f"=== TICK: mid_price={mid_price} ===")
+
+            # Generate proposals: orders at spread levels around mid price
             proposal = self.create_base_proposal()
-            self.logger().info(f"MM Proposals: buys={len(proposal.buys)}, sells={len(proposal.sells)}")
+            self.logger().info(f"Proposal: {len(proposal.buys)} buys, {len(proposal.sells)} sells")
 
-            # Apply order optimization if enabled (keeps orders competitive)
-            self.apply_order_price_modifiers(proposal)
+            # Get ALL active orders (ignore _exit_orders tracking - treat all as MM orders)
+            all_orders = self.active_orders
+            active_buys = [o for o in all_orders if o.is_buy]
+            active_sells = [o for o in all_orders if not o.is_buy]
 
-            # TESTNET: Simple logic - place first, then cancel stale
-            mm_orders = [o for o in self.active_orders if o.client_order_id not in self._exit_orders.keys()]
+            self.logger().info(f"Active orders: {len(active_buys)} buys, {len(active_sells)} sells")
 
-            # Get current order prices
-            active_buy_prices = [Decimal(str(o.price)) for o in mm_orders if o.is_buy]
-            active_sell_prices = [Decimal(str(o.price)) for o in mm_orders if not o.is_buy]
+            # Helper: check if price is near any in list (within tolerance)
+            tolerance = Decimal("0.005")  # 0.5%
 
-            # Proposed prices
-            proposed_buy_prices = [b.price for b in proposal.buys]
-            proposed_sell_prices = [s.price for s in proposal.sells]
-
-            # Helper: check if price is "close enough" to any in list (within 0.5%)
-            def has_order_near(price, price_list):
-                if not price_list:
-                    return False
-                for p in price_list:
-                    if abs(price - p) / price <= Decimal("0.005"):  # 0.5% tolerance
+            def has_order_near(price, orders):
+                for o in orders:
+                    if abs(Decimal(str(o.price)) - price) / price <= tolerance:
                         return True
                 return False
 
-            # 1. PLACE NEW ORDERS at proposed prices not yet covered
-            new_buys = [b for b in proposal.buys if not has_order_near(b.price, active_buy_prices)]
-            new_sells = [s for s in proposal.sells if not has_order_near(s.price, active_sell_prices)]
+            # STEP 1: PLACE NEW ORDERS FIRST (at levels not covered)
+            new_buys = [b for b in proposal.buys if not has_order_near(b.price, active_buys)]
+            new_sells = [s for s in proposal.sells if not has_order_near(s.price, active_sells)]
 
             if new_buys or new_sells:
-                self.logger().info(f"Placing {len(new_buys)} buys, {len(new_sells)} sells")
+                self.logger().info(f"PLACING: {len(new_buys)} buys, {len(new_sells)} sells")
                 self.execute_orders_proposal(Proposal(new_buys, new_sells), PositionAction.OPEN)
 
-            # 2. TESTNET: Cancel orders that are far from proposed prices
-            for order in mm_orders:
+            # STEP 2: CANCEL STALE ORDERS (far from any proposed level)
+            proposed_buy_prices = [b.price for b in proposal.buys]
+            proposed_sell_prices = [s.price for s in proposal.sells]
+
+            def is_near_any_proposed(order_price, proposed_prices):
+                for p in proposed_prices:
+                    if abs(order_price - p) / order_price <= tolerance:
+                        return True
+                return False
+
+            for order in active_buys:
                 order_price = Decimal(str(order.price))
-                if order.is_buy:
-                    if proposed_buy_prices and not has_order_near(order_price, proposed_buy_prices):
-                        self.logger().info(f"Cancelling stale buy at {order_price}")
-                        self.cancel_order(self._market_info, order.client_order_id)
-                else:
-                    if proposed_sell_prices and not has_order_near(order_price, proposed_sell_prices):
-                        self.logger().info(f"Cancelling stale sell at {order_price}")
-                        self.cancel_order(self._market_info, order.client_order_id)
+                if not is_near_any_proposed(order_price, proposed_buy_prices):
+                    self.logger().info(f"CANCEL stale buy at {order_price}")
+                    self.cancel_order(self._market_info, order.client_order_id)
 
-            self.cancel_orders_below_min_spread()
+            for order in active_sells:
+                order_price = Decimal(str(order.price))
+                if not is_near_any_proposed(order_price, proposed_sell_prices):
+                    self.logger().info(f"CANCEL stale sell at {order_price}")
+                    self.cancel_order(self._market_info, order.client_order_id)
 
-            # Reset peak prices
-            self._ts_peak_ask_price = market.get_price(self.trading_pair, False)
-            self._ts_peak_bid_price = market.get_price(self.trading_pair, True)
-
-            # DISABLED FOR TESTNET: Skip position management (profit taking / stop loss)
-            # Just keep placing MM orders regardless of position
-            # if len(session_positions) > 0:
-            #     self.manage_positions(session_positions)
         finally:
             self._last_timestamp = timestamp
 
@@ -769,6 +763,11 @@ class PerpetualMarketMakingStrategy(StrategyPyBase):
         buys = []
         sells = []
 
+        # DEBUG: Log the levels configuration
+        self.logger().info(f"create_base_proposal: buy_levels={self._buy_levels}, sell_levels={self._sell_levels}")
+        self.logger().info(f"create_base_proposal: bid_spread={self._bid_spread}, ask_spread={self._ask_spread}")
+        self.logger().info(f"create_base_proposal: order_amount={self._order_amount}, price={self.get_price()}")
+
         # First to check if a customized order override is configured, otherwise the proposal will be created according
         # to order spread, amount, and levels setting.
         order_override = self._order_override
@@ -804,6 +803,13 @@ class PerpetualMarketMakingStrategy(StrategyPyBase):
                 size = market.quantize_order_amount(self.trading_pair, size)
                 if size > 0:
                     sells.append(PriceSize(price, size))
+
+        # DEBUG: Log created proposals
+        self.logger().info(f"create_base_proposal RESULT: {len(buys)} buys, {len(sells)} sells")
+        for i, buy in enumerate(buys):
+            self.logger().info(f"  BUY[{i}]: price={buy.price}, size={buy.size}")
+        for i, sell in enumerate(sells):
+            self.logger().info(f"  SELL[{i}]: price={sell.price}, size={sell.size}")
 
         return Proposal(buys, sells)
 
