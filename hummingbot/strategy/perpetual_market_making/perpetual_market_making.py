@@ -554,7 +554,7 @@ class PerpetualMarketMakingStrategy(StrategyPyBase):
             return
         self._position_mode_not_ready_counter = 0
         market: DerivativeBase = self._market_info.market
-        session_positions = [s for s in self.active_positions.values() if s.trading_pair == self.trading_pair]
+        # session_positions = [s for s in self.active_positions.values() if s.trading_pair == self.trading_pair]
         current_tick = timestamp // self._status_report_interval
         last_tick = self._last_timestamp // self._status_report_interval
         should_report_warnings = ((current_tick > last_tick) and
@@ -575,87 +575,53 @@ class PerpetualMarketMakingStrategy(StrategyPyBase):
                     self.logger().warning("WARNING: Some markets are not connected or are down at the moment. Market "
                                           "making may be dangerous when markets or networks are unstable.")
 
-            # OPTION C: Force MM orders regardless of position
-            # Always create MM orders - don't check position or continuous_quoting
-            proposal = None
-            if self._create_timestamp <= self.current_timestamp:
-                # 1. Create base order proposals
-                proposal = self.create_base_proposal()
-                self.logger().info(f"MM Proposals: buys={len(proposal.buys)}, sells={len(proposal.sells)}")
+            # TESTNET MODE: Always create proposals on every tick to keep book filled
+            # Ignore _create_timestamp delay - always try to fill gaps
+            proposal = self.create_base_proposal()
+            self.logger().info(f"MM Proposals: buys={len(proposal.buys)}, sells={len(proposal.sells)}")
 
-                # 2. Apply price band (ceiling/floor)
-                self.apply_order_levels_modifiers(proposal)
+            # Apply order optimization if enabled (keeps orders competitive)
+            self.apply_order_price_modifiers(proposal)
 
-                # 3. Apply order optimization if enabled
-                self.apply_order_price_modifiers(proposal)
+            # TESTNET: Simple logic - place first, then cancel stale
+            mm_orders = [o for o in self.active_orders if o.client_order_id not in self._exit_orders.keys()]
 
-                # 4. Apply budget constraint
-                self.apply_budget_constraint(proposal)
-                self.logger().info(f"After budget: buys={len(proposal.buys)}, sells={len(proposal.sells)}")
+            # Get current order prices
+            active_buy_prices = [Decimal(str(o.price)) for o in mm_orders if o.is_buy]
+            active_sell_prices = [Decimal(str(o.price)) for o in mm_orders if not o.is_buy]
 
-                # 5. Filter out takers (orders that would cross spread)
-                self.filter_out_takers(proposal)
-                self.logger().info(f"After filter: buys={len(proposal.buys)}, sells={len(proposal.sells)}")
+            # Proposed prices
+            proposed_buy_prices = [b.price for b in proposal.buys]
+            proposed_sell_prices = [s.price for s in proposal.sells]
 
-            # SIMPLE LOGIC: Place first, then cancel
-            if proposal is not None:
-                mm_orders = [o for o in self.active_orders if o.client_order_id not in self._exit_orders.keys()]
-
-                # Get current order prices
-                active_buy_prices = [Decimal(str(o.price)) for o in mm_orders if o.is_buy]
-                active_sell_prices = [Decimal(str(o.price)) for o in mm_orders if not o.is_buy]
-
-                # Proposed prices
-                proposed_buy_prices = [b.price for b in proposal.buys]
-                proposed_sell_prices = [s.price for s in proposal.sells]
-
-                # Helper: check if price is "close enough" to any in list (within 0.5%)
-                def has_order_near(price, price_list):
-                    if not price_list:
-                        return False
-                    for p in price_list:
-                        if abs(price - p) / price <= Decimal("0.005"):  # 0.5% tolerance
-                            return True
+            # Helper: check if price is "close enough" to any in list (within 0.5%)
+            def has_order_near(price, price_list):
+                if not price_list:
                     return False
+                for p in price_list:
+                    if abs(price - p) / price <= Decimal("0.005"):  # 0.5% tolerance
+                        return True
+                return False
 
-                # 1. PLACE NEW ORDERS at proposed prices not yet covered
-                new_buys = [b for b in proposal.buys if not has_order_near(b.price, active_buy_prices)]
-                new_sells = [s for s in proposal.sells if not has_order_near(s.price, active_sell_prices)]
+            # 1. PLACE NEW ORDERS at proposed prices not yet covered
+            new_buys = [b for b in proposal.buys if not has_order_near(b.price, active_buy_prices)]
+            new_sells = [s for s in proposal.sells if not has_order_near(s.price, active_sell_prices)]
 
-                if new_buys or new_sells:
-                    self.logger().info(f"Placing {len(new_buys)} buys, {len(new_sells)} sells")
-                    self.execute_orders_proposal(Proposal(new_buys, new_sells), PositionAction.OPEN)
+            if new_buys or new_sells:
+                self.logger().info(f"Placing {len(new_buys)} buys, {len(new_sells)} sells")
+                self.execute_orders_proposal(Proposal(new_buys, new_sells), PositionAction.OPEN)
 
-                # 2. CANCEL OLD ORDERS that aren't near any proposed price
-                # PROTECTION: Don't cancel buy orders if proposal has no buys (something is wrong)
-                # PROTECTION: Don't cancel sell orders if proposal has no sells
-                # PROTECTION: Always keep at least min_orders_per_side orders on each side
-
-                active_buys = [o for o in mm_orders if o.is_buy]
-                active_sells = [o for o in mm_orders if not o.is_buy]
-                buys_cancelled = 0
-                sells_cancelled = 0
-
-                for order in mm_orders:
-                    order_price = Decimal(str(order.price))
-                    if order.is_buy:
-                        # Only cancel if we have proposed buys AND this order isn't near any of them
-                        # AND we'll still have at least MIN_ORDERS_PER_SIDE buys left
-                        if proposed_buy_prices and not has_order_near(order_price, proposed_buy_prices):
-                            if len(active_buys) - buys_cancelled > self._min_orders_per_side:
-                                self.logger().info(f"Cancelling stale buy at {order_price}")
-                                self.cancel_order(self._market_info, order.client_order_id)
-                                buys_cancelled += 1
-                    else:
-                        # Only cancel if we have proposed sells AND this order isn't near any of them
-                        # AND we'll still have at least MIN_ORDERS_PER_SIDE sells left
-                        if proposed_sell_prices and not has_order_near(order_price, proposed_sell_prices):
-                            if len(active_sells) - sells_cancelled > self._min_orders_per_side:
-                                self.logger().info(f"Cancelling stale sell at {order_price}")
-                                self.cancel_order(self._market_info, order.client_order_id)
-                                sells_cancelled += 1
-
-                self.set_timers()
+            # 2. TESTNET: Cancel orders that are far from proposed prices
+            for order in mm_orders:
+                order_price = Decimal(str(order.price))
+                if order.is_buy:
+                    if proposed_buy_prices and not has_order_near(order_price, proposed_buy_prices):
+                        self.logger().info(f"Cancelling stale buy at {order_price}")
+                        self.cancel_order(self._market_info, order.client_order_id)
+                else:
+                    if proposed_sell_prices and not has_order_near(order_price, proposed_sell_prices):
+                        self.logger().info(f"Cancelling stale sell at {order_price}")
+                        self.cancel_order(self._market_info, order.client_order_id)
 
             self.cancel_orders_below_min_spread()
 
@@ -663,9 +629,10 @@ class PerpetualMarketMakingStrategy(StrategyPyBase):
             self._ts_peak_ask_price = market.get_price(self.trading_pair, False)
             self._ts_peak_bid_price = market.get_price(self.trading_pair, True)
 
-            # Manage positions (profit taking / stop loss) if holding a position
-            if len(session_positions) > 0:
-                self.manage_positions(session_positions)
+            # DISABLED FOR TESTNET: Skip position management (profit taking / stop loss)
+            # Just keep placing MM orders regardless of position
+            # if len(session_positions) > 0:
+            #     self.manage_positions(session_positions)
         finally:
             self._last_timestamp = timestamp
 
