@@ -1,0 +1,140 @@
+# Insurance Fund Unwinder Strategy Configuration
+# This configuration file defines parameters for the IF unwinding strategy
+
+strategy: insurance_fund_unwinder
+script_file_name: insurance_fund_unwinder.py
+
+# ===================================================================
+# Exchange Configuration
+# ===================================================================
+
+# Exchange connector name (must be Strike)
+exchange: strike_perpetual
+
+# Trading pairs to manage
+# - Leave empty to auto-discover all IF positions
+# - Or specify specific pairs to limit scope
+trading_pairs: []
+# Example:
+# trading_pairs:
+#   - ADA-USD
+#   - BTC-USD
+#   - ETH-USD
+
+# ===================================================================
+# Risk Management Parameters
+# ===================================================================
+
+# Maximum total notional exposure across all IF positions (USD)
+# Should match or be slightly lower than backend IF config
+# Backend default: $1,000,000
+max_total_notional_usd: 1000000
+
+# Maximum notional per symbol (USD)
+# Should match backend config
+# Backend default: $200,000
+max_symbol_notional_usd: 200000
+
+# Maximum utilization of IF capital (percentage of NAV)
+# Backend default: 80%
+max_utilization_pct: 80
+
+# Margin ratio threshold to trigger aggressive mode (%)
+# When margin ratio exceeds this, switch to aggressive unwinding
+# Lower = more conservative (trigger earlier)
+# Higher = more relaxed (trigger later)
+aggressive_mode_margin_ratio: 50
+
+# Total unrealized loss threshold to trigger aggressive mode (USD)
+# When total unrealized loss exceeds this, switch to aggressive
+aggressive_mode_loss_threshold_usd: 50000
+
+# ===================================================================
+# MAKER Mode Parameters (Default Behavior)
+# ===================================================================
+
+# Order placement spread from mark price (basis points)
+# Positive = order price more favorable than mark
+# - For longs: sell at mark + spread (higher price)
+# - For shorts: buy at mark - spread (lower price)
+# Default: 10 bps = 0.1%
+maker_spread_bps: 10
+
+# Minimum profit spread from entry price (basis points)
+# Ensures orders don't lose money
+# - 0 = break-even accepted
+# - Positive = require profit
+# Default: 0 (accept break-even)
+min_profit_spread_bps: 0
+
+# Order size as percentage of position (%)
+# Smaller = more gradual unwinding
+# Larger = faster unwinding
+# Default: 10%
+maker_order_size_pct: 10
+
+# Minimum order size (base asset)
+# Prevents orders smaller than exchange minimum
+# Adjust per symbol
+min_order_size: 0.001
+
+# Order refresh time (seconds)
+# How often to cancel and replace orders
+# Shorter = more responsive to price changes
+# Longer = less gas/fees
+# Default: 30 seconds
+order_refresh_time: 30
+
+# ===================================================================
+# AGGRESSIVE Mode Parameters (Risk-Driven Behavior)
+# ===================================================================
+
+# Order size as percentage of position in aggressive mode (%)
+# Larger than maker mode to unwind faster
+# Default: 25%
+aggressive_order_size_pct: 25
+
+# Maximum slippage tolerance for aggressive orders (basis points)
+# Accepts worse prices to ensure execution
+# Default: 50 bps = 0.5%
+aggressive_slippage_bps: 50
+
+# ===================================================================
+# Operational Parameters
+# ===================================================================
+
+# Status report interval (seconds)
+# How often to log comprehensive status
+# Default: 300 seconds (5 minutes)
+status_report_interval: 300
+
+# ===================================================================
+# Configuration Profiles
+# ===================================================================
+
+# Uncomment ONE profile below or use custom values above
+
+# --- CONSERVATIVE Profile (Profit-Focused) ---
+# Prioritizes profitability over speed
+# Use when: IF has ample capital, low liquidation frequency
+# maker_spread_bps: 20
+# min_profit_spread_bps: 5
+# maker_order_size_pct: 5
+# aggressive_mode_margin_ratio: 40
+# aggressive_order_size_pct: 20
+# aggressive_slippage_bps: 30
+
+# --- BALANCED Profile (Recommended) ---
+# Balances profit and risk management
+# Use when: Normal operations
+# (Values above represent balanced profile)
+
+# --- AGGRESSIVE Profile (Risk-Focused) ---
+# Prioritizes risk reduction over profit
+# Use when: High liquidation volume, small IF capital
+# maker_spread_bps: 5
+# min_profit_spread_bps: 0
+# maker_order_size_pct: 20
+# aggressive_mode_margin_ratio: 60
+# aggressive_order_size_pct: 30
+# aggressive_slippage_bps: 75
