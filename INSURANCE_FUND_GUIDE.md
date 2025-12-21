@@ -113,6 +113,37 @@ API URL: http://localhost:8080
 WebSocket URL: ws://localhost:8080
 ```
 
+## 📋 Choose Your Strategy
+
+Two unwinding strategies are available:
+
+### 1. Simple Unwinder (Recommended for Most Cases)
+
+**File:** `if_unwinder_simple.py`
+
+- ✅ Simple, proven, reliable
+- ✅ Always uses maker limit orders
+- ✅ Gradual unwinding (10% per order)
+- ✅ Best for normal market conditions
+
+**Use when:** IF positions are small relative to fund size, markets are stable
+
+### 2. Aggressive Mode Unwinder (Advanced)
+
+**File:** `if_unwinder_with_aggressive.py`
+
+- ✅ Dual-mode operation (MAKER + AGGRESSIVE)
+- ✅ Automatic risk monitoring
+- ✅ Switches to market orders when needed
+- ✅ Follows full spec requirements
+
+**Use when:** IF handles large positions, volatile markets, or needs faster risk reduction
+
+**Triggers aggressive mode when:**
+- Utilization > 80%
+- Unrealized loss > $50K
+- Position hasn't reduced after 5 minutes
+
 ## 🚀 Quick Start
 
 ### Step 1: Set Environment Variables
@@ -155,6 +186,9 @@ In Hummingbot console:
 # Verify shows: 1000000.00 USDT
 
 >>> start --script if_unwinder_simple.py
+
+# OR for aggressive mode:
+>>> start --script if_unwinder_with_aggressive.py
 ```
 
 ✅ Done! The Insurance Fund unwinder is now active.
@@ -208,6 +242,8 @@ refresh_time = 30      # Refresh orders every 30 seconds
 
 ## ⚙️ Customize Strategy
 
+### Simple Unwinder
+
 Edit `/Users/hoangvu/hade/strike/hummingbot/scripts/if_unwinder_simple.py`:
 
 ### Faster Unwinding (Aggressive)
@@ -232,6 +268,36 @@ After editing, restart:
 >>> stop
 >>> start --script if_unwinder_simple.py
 ```
+
+### Aggressive Mode Unwinder
+
+Edit `/Users/hoangvu/hade/strike/hummingbot/scripts/if_unwinder_with_aggressive.py`:
+
+**MAKER Mode (default):**
+
+```python
+maker_spread_bps = 10       # 0.1% spread
+maker_order_size_pct = 10   # 10% of position
+maker_refresh_time = 30     # 30 seconds
+```
+
+**AGGRESSIVE Mode (risk-triggered):**
+
+```python
+aggressive_spread_bps = 2         # 0.02% spread (very tight)
+aggressive_order_size_pct = 30    # 30% of position (faster)
+aggressive_refresh_time = 10      # 10 seconds (more frequent)
+```
+
+**Risk Thresholds:**
+
+```python
+max_utilization_pct = 80           # Trigger if utilization > 80%
+max_unrealized_loss_usd = 50000    # Trigger if loss > $50K
+position_stale_time_sec = 300      # Trigger if stale > 5 minutes
+```
+
+The strategy automatically switches to aggressive mode when risk thresholds are exceeded
 
 ## 🧪 Test the Strategy
 
@@ -364,12 +430,15 @@ Should return IF account data with balance.
 
 ## 📚 Files Reference
 
-| File                              | Purpose                                      |
-| --------------------------------- | -------------------------------------------- |
-| `scripts/if_unwinder_simple.py`   | Working IF unwinder strategy                 |
-| `scripts/test_if_simple.py`       | Simple test script to verify connection      |
-| `.env`                            | Environment variables (credentials)          |
-| `logs/logs_hummingbot.log`        | Hummingbot activity logs                     |
+| File                                       | Purpose                                      |
+| ------------------------------------------ | -------------------------------------------- |
+| `scripts/if_unwinder_simple.py`            | Simple IF unwinder (maker mode only)         |
+| `scripts/if_unwinder_with_aggressive.py`   | Advanced unwinder with aggressive mode       |
+| `scripts/test_if_simple.py`                | Connection test script                       |
+| `.env`                                     | Environment variables (credentials)          |
+| `logs/logs_hummingbot.log`                 | Hummingbot activity logs                     |
+| `HOW_IF_WORKS.md`                          | Architecture documentation                   |
+| `INSURANCE_FUND_GUIDE.md`                  | Setup and usage guide                        |
 
 ## 🎓 Integration with Backend
 
