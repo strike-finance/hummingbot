@@ -61,6 +61,13 @@ class IFUnwinderAggressive(ScriptStrategyBase):
         self._position_tracking = {}  # Track position sizes over time
         self._mode = UnwindingMode.MAKER
 
+        # Manually populate markets from connectors to ensure active_markets works
+        if connectors:
+            for exchange_name in connectors:
+                if exchange_name not in self.markets:
+                    self.markets[exchange_name] = set()
+            self.logger().info(f"IF Unwinder initialized with connectors: {list(connectors.keys())}")
+
     def on_tick(self):
         """Called every second"""
         current_time = self.current_timestamp
@@ -386,3 +393,26 @@ class IFUnwinderAggressive(ScriptStrategyBase):
         lines.append(f"  Position Stale Time: {self.position_stale_time_sec}s")
 
         return "\n".join(lines)
+
+    def __str__(self) -> str:
+        """Quick status for inline display"""
+        try:
+            for exchange_name in list(self.connectors.keys()):
+                exchange = self.connectors[exchange_name]
+                balance = float(exchange.get_balance("USDT"))
+
+                positions_count = 0
+                if hasattr(exchange, 'account_positions') and exchange.account_positions:
+                    positions_count = len(exchange.account_positions)
+
+                status = "Active" if positions_count > 0 else "Waiting"
+                return (
+                    f"Mode: {self._mode.value.upper()} | "
+                    f"Balance: ${balance:,.0f} | "
+                    f"Positions: {positions_count} | "
+                    f"{status}"
+                )
+        except Exception:
+            pass
+
+        return f"Mode: {self._mode.value.upper()} | Initializing..."

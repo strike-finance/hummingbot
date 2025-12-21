@@ -115,7 +115,7 @@ WebSocket URL: ws://localhost:8080
 
 ## 📋 Choose Your Strategy
 
-Two unwinding strategies are available:
+Three unwinding strategies are available:
 
 ### 1. Simple Unwinder (Recommended for Most Cases)
 
@@ -126,7 +126,7 @@ Two unwinding strategies are available:
 - ✅ Gradual unwinding (10% per order)
 - ✅ Best for normal market conditions
 
-**Use when:** IF positions are small relative to fund size, markets are stable
+**Use when:** IF positions are small, markets are stable, simple operation needed
 
 ### 2. Aggressive Mode Unwinder (Advanced)
 
@@ -137,12 +137,31 @@ Two unwinding strategies are available:
 - ✅ Switches to market orders when needed
 - ✅ Follows full spec requirements
 
-**Use when:** IF handles large positions, volatile markets, or needs faster risk reduction
+**Use when:** IF handles large positions, volatile markets, need faster risk reduction
 
 **Triggers aggressive mode when:**
 - Utilization > 80%
 - Unrealized loss > $50K
 - Position hasn't reduced after 5 minutes
+
+### 3. Monitored Unwinder (Production Recommended)
+
+**File:** `if_unwinder_monitored.py`
+
+- ✅ All aggressive mode features PLUS
+- ✅ Real-time monitoring dashboard
+- ✅ Automatic alerts and notifications
+- ✅ Performance tracking
+- ✅ Hourly reports
+
+**Use when:** Production deployment, need visibility, want comprehensive monitoring
+
+**Dashboard shows:**
+- Real-time balance and utilization
+- Active positions with PnL
+- Session statistics
+- Mode switches and alerts
+- Performance metrics
 
 ## 🚀 Quick Start
 
@@ -189,6 +208,9 @@ In Hummingbot console:
 
 # OR for aggressive mode:
 >>> start --script if_unwinder_with_aggressive.py
+
+# OR for monitored (production):
+>>> start --script if_unwinder_monitored.py
 ```
 
 ✅ Done! The Insurance Fund unwinder is now active.
@@ -434,6 +456,8 @@ Should return IF account data with balance.
 | ------------------------------------------ | -------------------------------------------- |
 | `scripts/if_unwinder_simple.py`            | Simple IF unwinder (maker mode only)         |
 | `scripts/if_unwinder_with_aggressive.py`   | Advanced unwinder with aggressive mode       |
+| `scripts/if_unwinder_monitored.py`         | Complete solution: unwinding + monitoring    |
+| `scripts/if_monitor.py`                    | Standalone monitoring dashboard              |
 | `scripts/test_if_simple.py`                | Connection test script                       |
 | `.env`                                     | Environment variables (credentials)          |
 | `logs/logs_hummingbot.log`                 | Hummingbot activity logs                     |
