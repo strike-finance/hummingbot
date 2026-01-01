@@ -56,12 +56,15 @@ services:
     volumes:
       - ./conf/sol/strategies:/home/hummingbot/conf/strategies
       - ./conf/sol/connectors:/home/hummingbot/conf/connectors
+      - ./conf/sol/controllers:/home/hummingbot/conf/controllers
+      - ./conf/sol/scripts:/home/hummingbot/conf/scripts
       - ./logs/sol:/home/hummingbot/logs
       - ./data/sol:/home/hummingbot/data
       - ./scripts:/home/hummingbot/scripts
       - ./controllers:/home/hummingbot/controllers
     environment:
-      - CONFIG_FILE_NAME=sol_usd_mm.yml
+      - CONFIG_FILE_NAME=v2_with_controllers.py
+      - SCRIPT_CONFIG=sol_mm_dynamic.yml
 
   hummingbot-ada:
     <<: *hummingbot-common

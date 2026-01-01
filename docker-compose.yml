@@ -29,9 +29,9 @@ services:
       - ./scripts:/home/hummingbot/scripts
       - ./controllers:/home/hummingbot/controllers
     environment:
-      # Auto-start the multi-pair market maker
+      # Auto-start SOL PMM Dynamic V2 strategy
       - CONFIG_FILE_NAME=v2_with_controllers.py
-      - SCRIPT_CONFIG=strike_multi_mm.yml
+      - SCRIPT_CONFIG=sol/scripts/sol_mm_dynamic.yml
     logging:
       driver: "json-file"
       options:

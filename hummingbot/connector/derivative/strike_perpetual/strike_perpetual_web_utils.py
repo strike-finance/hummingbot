@@ -77,7 +77,8 @@ def rest_url(path_url: str, domain: str = CONSTANTS.DOMAIN, base_url: Optional[s
         else:
             base_url = CONSTANTS.PERPETUAL_BASE_URL  # Port 8080 - Trading API
 
-    return base_url + path_url
+    full_url = base_url + path_url
+    return full_url
 
 
 def wss_url(domain: str = CONSTANTS.DOMAIN) -> str:
@@ -157,8 +158,9 @@ def is_exchange_information_valid(exchange_info: Dict[str, Any]) -> bool:
     :param exchange_info: The exchange information dictionary
     :return: True if valid, False otherwise
     """
-    # For Strike, we consider all markets valid if they have a symbol
-    return "symbol" in exchange_info and exchange_info.get("status") == 1
+    # For Strike, we consider all markets valid if they have a symbol and status is "trading" or 1
+    status = exchange_info.get("status")
+    return "symbol" in exchange_info and (status == "trading" or status == 1)
 
 
 def convert_hb_order_type_to_strike(order_type_str: str) -> int:

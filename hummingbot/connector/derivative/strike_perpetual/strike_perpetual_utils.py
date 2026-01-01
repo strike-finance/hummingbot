@@ -47,7 +47,7 @@ class StrikePerpetualConfigMap(BaseConnectorConfigMap):
         json_schema_extra={
             "prompt": "Enter Strike API base URL (default: http://localhost:8080)",
             "is_secure": False,
-            "is_connect_key": False,
+            "is_connect_key": True,
             "prompt_on_new": False,
         }
     )
@@ -56,7 +56,7 @@ class StrikePerpetualConfigMap(BaseConnectorConfigMap):
         json_schema_extra={
             "prompt": "Enter Strike WebSocket URL (default: ws://localhost:8083/ws)",
             "is_secure": False,
-            "is_connect_key": False,
+            "is_connect_key": True,
             "prompt_on_new": False,
         }
     )
@@ -65,7 +65,7 @@ class StrikePerpetualConfigMap(BaseConnectorConfigMap):
         json_schema_extra={
             "prompt": "Enter Strike Price Service URL (default: http://localhost:8082)",
             "is_secure": False,
-            "is_connect_key": False,
+            "is_connect_key": True,
             "prompt_on_new": False,
         }
     )
